@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "description": "Backend fiscal NFCe",
   "main": "dist/server.js",
+  "type": "commonjs",
   "scripts": {
-    "build": "tsc",
+    "build": "node node_modules/typescript/lib/tsc.js",
     "start": "node dist/server.js",
-    "dev": "ts-node-dev src/server.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
