@@ -47,6 +47,20 @@ async function baixarCertificado(path: string) {
   return Buffer.from(await data.arrayBuffer());
 }
 
+async function obterCertificadoBuffer(payload: any) {
+  if (payload?.certificado?.pfx_base64) {
+    console.log("Usando certificado via pfx_base64");
+    return Buffer.from(payload.certificado.pfx_base64, "base64");
+  }
+
+  if (payload?.certificado?.path) {
+    console.log(`Baixando certificado do bucket: ${CERT_BUCKET}/${payload.certificado.path}`);
+    return await baixarCertificado(payload.certificado.path);
+  }
+
+  throw new Error("Certificado não informado. Envie certificado.pfx_base64 ou certificado.path");
+}
+
 function validarCertificadoP12(buffer: Buffer, senha: string) {
   const p12Der = forge.util.createBuffer(buffer.toString("binary"));
   const p12Asn1 = forge.asn1.fromDer(p12Der);
@@ -315,7 +329,7 @@ async function emitirNfceHandler(orderId: string, payload: any, res: express.Res
       });
     }
 
-    if (!payload?.emitente?.cnpj || !payload?.certificado?.path || !payload?.certificado?.senha) {
+    if (!payload?.emitente?.cnpj || !payload?.certificado?.senha) {
       return res.status(400).json({
         autorizado: false,
         status: "ERROR",
@@ -323,7 +337,7 @@ async function emitirNfceHandler(orderId: string, payload: any, res: express.Res
       });
     }
 
-    const certBuffer = await baixarCertificado(payload.certificado.path);
+    const certBuffer = await obterCertificadoBuffer(payload);
     validarCertificadoP12(certBuffer, payload.certificado.senha);
 
     const { xml, chaveFake } = gerarXmlBase(payload);
