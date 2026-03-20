@@ -24,11 +24,14 @@ const SEFAZ_GO = {
     autorizacaoHomologacao: "https://homolog.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
 };
 function onlyNumbers(value) {
-    return String(value || "").replace(/\D/g, "");
+    return String(value ?? "").replace(/\D/g, "");
 }
 function safeNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
+}
+function pad(value, size) {
+    return String(value).padStart(size, "0");
 }
 async function obterCertificadoBuffer(payload) {
     if (payload?.certificado?.pfx_base64) {
@@ -74,18 +77,6 @@ function validarCertificadoP12(buffer, senha) {
         validTo: data.validTo,
     };
 }
-function gerarChave(payload, cNF) {
-    const cUF = "52";
-    const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
-    const cnpj = onlyNumbers(payload.emitente?.cnpj);
-    const mod = String(payload.modelo || 65);
-    const serie = String(payload.serie || 1);
-    const numero = String(payload.numero || 1);
-    const tpEmis = "1";
-    const base = `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}${tpEmis}${cNF}`;
-    const dv = calcularDVChave(base);
-    return `${base}${dv}`;
-}
 function calcularDVChave(chave43) {
     let peso = 2;
     let soma = 0;
@@ -95,6 +86,18 @@ function calcularDVChave(chave43) {
     }
     const mod = soma % 11;
     return mod === 0 || mod === 1 ? "0" : String(11 - mod);
+}
+function gerarChave(payload, cNF) {
+    const cUF = "52";
+    const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
+    const cnpj = onlyNumbers(payload.emitente?.cnpj);
+    const mod = String(payload.modelo || 65);
+    const serie = pad(payload.serie || 1, 3);
+    const numero = pad(payload.numero || 1, 9);
+    const tpEmis = "1";
+    const base43 = `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie}${numero}${tpEmis}${cNF}`;
+    const dv = calcularDVChave(base43);
+    return `${base43}${dv}`;
 }
 function gerarXmlBase(payload) {
     const cUF = "52";
@@ -108,6 +111,25 @@ function gerarXmlBase(payload) {
     const cMun = String(payload.emitente?.codigo_municipio || "5212501");
     const chave = gerarChave(payload, cNF);
     const dv = chave.slice(-1);
+    const cep = onlyNumbers(payload.emitente?.cep || "");
+    const ie = onlyNumbers(payload.emitente?.inscricao_estadual || "");
+    const fone = onlyNumbers(payload.emitente?.fone || "");
+    if (!cnpj)
+        throw new Error("emitente.cnpj é obrigatório");
+    if (!ie)
+        throw new Error("emitente.inscricao_estadual é obrigatória");
+    if (cep.length !== 8)
+        throw new Error("emitente.cep deve ter 8 dígitos");
+    if (!payload.emitente?.razao_social)
+        throw new Error("emitente.razao_social é obrigatória");
+    if (!payload.emitente?.logradouro)
+        throw new Error("emitente.logradouro é obrigatório");
+    if (!payload.emitente?.bairro)
+        throw new Error("emitente.bairro é obrigatório");
+    if (!payload.emitente?.cidade)
+        throw new Error("emitente.cidade é obrigatória");
+    if (!payload.emitente?.uf)
+        throw new Error("emitente.uf é obrigatória");
     const root = (0, xmlbuilder2_1.create)().ele("NFe", {
         xmlns: "http://www.portalfiscal.inf.br/nfe",
     });
@@ -137,32 +159,44 @@ function gerarXmlBase(payload) {
     ide.ele("verProc").txt("1.0.0");
     const emit = infNFe.ele("emit");
     emit.ele("CNPJ").txt(cnpj);
-    emit.ele("xNome").txt(payload.emitente?.razao_social || "");
-    emit.ele("xFant").txt(payload.emitente?.nome_fantasia || payload.emitente?.razao_social || "");
+    emit.ele("xNome").txt(payload.emitente.razao_social);
+    if (payload.emitente?.nome_fantasia) {
+        emit.ele("xFant").txt(payload.emitente.nome_fantasia);
+    }
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(payload.emitente?.logradouro || "NAO INFORMADO");
-    enderEmit.ele("nro").txt(payload.emitente?.numero || "SN");
-    enderEmit.ele("xBairro").txt(payload.emitente?.bairro || "CENTRO");
+    enderEmit.ele("xLgr").txt(payload.emitente.logradouro);
+    enderEmit.ele("nro").txt(payload.emitente.numero || "SN");
+    if (payload.emitente?.complemento) {
+        enderEmit.ele("xCpl").txt(payload.emitente.complemento);
+    }
+    enderEmit.ele("xBairro").txt(payload.emitente.bairro);
     enderEmit.ele("cMun").txt(cMun);
-    enderEmit.ele("xMun").txt(payload.emitente?.cidade || "LUZIANIA");
-    enderEmit.ele("UF").txt(payload.emitente?.uf || "GO");
-    enderEmit.ele("CEP").txt(onlyNumbers(payload.emitente?.cep || ""));
+    enderEmit.ele("xMun").txt(payload.emitente.cidade);
+    enderEmit.ele("UF").txt(payload.emitente.uf);
+    enderEmit.ele("CEP").txt(cep);
     enderEmit.ele("cPais").txt("1058");
     enderEmit.ele("xPais").txt("BRASIL");
-    enderEmit.ele("fone").txt(onlyNumbers(payload.emitente?.fone || ""));
-    emit.ele("IE").txt(onlyNumbers(payload.emitente?.inscricao_estadual));
+    if (fone) {
+        enderEmit.ele("fone").txt(fone);
+    }
+    emit.ele("IE").txt(ie);
     emit.ele("CRT").txt(payload.emitente?.regime_tributario === "simples_nacional" ? "1" : "3");
     if (payload.destinatario?.cpf) {
         const dest = infNFe.ele("dest");
         dest.ele("CPF").txt(onlyNumbers(payload.destinatario.cpf));
-        if (payload.destinatario.nome) {
+        if (payload.destinatario?.nome) {
             dest.ele("xNome").txt(payload.destinatario.nome);
         }
         dest.ele("indIEDest").txt("9");
     }
     let totalProdutos = 0;
     for (const item of payload.itens || []) {
-        totalProdutos += safeNumber(item.valor_total);
+        const quantidade = safeNumber(item.quantidade, 1);
+        const valorUnitario = safeNumber(item.valor_unitario, 0);
+        const valorTotal = item.valor_total != null
+            ? safeNumber(item.valor_total, valorUnitario * quantidade)
+            : valorUnitario * quantidade;
+        totalProdutos += valorTotal;
         const det = infNFe.ele("det", { nItem: String(item.numero_item) });
         const prod = det.ele("prod");
         prod.ele("cProd").txt(String(item.codigo_produto || item.numero_item));
@@ -171,13 +205,13 @@ function gerarXmlBase(payload) {
         prod.ele("NCM").txt(item.ncm || "21069090");
         prod.ele("CFOP").txt(item.cfop || "5102");
         prod.ele("uCom").txt(item.unidade || "UN");
-        prod.ele("qCom").txt(safeNumber(item.quantidade, 1).toFixed(4));
-        prod.ele("vUnCom").txt(safeNumber(item.valor_unitario).toFixed(2));
-        prod.ele("vProd").txt(safeNumber(item.valor_total).toFixed(2));
+        prod.ele("qCom").txt(quantidade.toFixed(4));
+        prod.ele("vUnCom").txt(valorUnitario.toFixed(2));
+        prod.ele("vProd").txt(valorTotal.toFixed(2));
         prod.ele("cEANTrib").txt("SEM GTIN");
         prod.ele("uTrib").txt(item.unidade || "UN");
-        prod.ele("qTrib").txt(safeNumber(item.quantidade, 1).toFixed(4));
-        prod.ele("vUnTrib").txt(safeNumber(item.valor_unitario).toFixed(2));
+        prod.ele("qTrib").txt(quantidade.toFixed(4));
+        prod.ele("vUnTrib").txt(valorUnitario.toFixed(2));
         prod.ele("indTot").txt("1");
         const imposto = det.ele("imposto");
         imposto.ele("vTotTrib").txt("0.00");
@@ -192,6 +226,7 @@ function gerarXmlBase(payload) {
         const cofinsnt = cofins.ele("COFINSNT");
         cofinsnt.ele("CST").txt("07");
     }
+    const valorNF = safeNumber(payload.totais?.valor_total, totalProdutos);
     const total = infNFe.ele("total").ele("ICMSTot");
     total.ele("vBC").txt("0.00");
     total.ele("vICMS").txt("0.00");
@@ -211,14 +246,14 @@ function gerarXmlBase(payload) {
     total.ele("vPIS").txt("0.00");
     total.ele("vCOFINS").txt("0.00");
     total.ele("vOutro").txt("0.00");
-    total.ele("vNF").txt(safeNumber(payload.totais?.valor_total, totalProdutos).toFixed(2));
+    total.ele("vNF").txt(valorNF.toFixed(2));
     total.ele("vTotTrib").txt("0.00");
     const transp = infNFe.ele("transp");
     transp.ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
     const detPag = pag.ele("detPag");
     detPag.ele("tPag").txt(payload.pagamento?.forma_codigo || "01");
-    detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, totalProdutos).toFixed(2));
+    detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, valorNF).toFixed(2));
     const infAdic = infNFe.ele("infAdic");
     infAdic.ele("infCpl").txt(tpAmb === "2"
         ? "EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
@@ -360,10 +395,10 @@ async function gerarDanfeBase64(payload, numero, chaveAcesso) {
     doc.moveDown();
     doc.text("Itens:");
     for (const item of payload.itens || []) {
-        doc.text(`${item.numero_item}. ${item.descricao} | Qtd: ${item.quantidade} | Unit: ${safeNumber(item.valor_unitario).toFixed(2)} | Total: ${safeNumber(item.valor_total).toFixed(2)}`);
+        doc.text(`${item.numero_item}. ${item.descricao} | Qtd: ${safeNumber(item.quantidade, 1)} | Unit: ${safeNumber(item.valor_unitario, 0).toFixed(2)} | Total: ${safeNumber(item.valor_total, 0).toFixed(2)}`);
     }
     doc.moveDown();
-    doc.text(`Valor total: ${safeNumber(payload.totais?.valor_total).toFixed(2)}`);
+    doc.text(`Valor total: ${safeNumber(payload.totais?.valor_total, 0).toFixed(2)}`);
     const qrData = `CHAVE=${chaveAcesso}`;
     const qrDataUrl = await qrcode_1.default.toDataURL(qrData);
     const qrBase64 = qrDataUrl.replace(/^data:image\/png;base64,/, "");
