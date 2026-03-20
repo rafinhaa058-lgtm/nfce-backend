@@ -11,6 +11,7 @@ const xmlbuilder2_1 = require("xmlbuilder2");
 const pdfkit_1 = __importDefault(require("pdfkit"));
 const qrcode_1 = __importDefault(require("qrcode"));
 const axios_1 = __importDefault(require("axios"));
+const https_1 = __importDefault(require("https"));
 const fast_xml_parser_1 = require("fast-xml-parser");
 const xml_crypto_1 = require("xml-crypto");
 dotenv_1.default.config();
@@ -236,7 +237,7 @@ function montarSoapAutorizacao(xmlAssinado) {
   </soap12:Body>
 </soap12:Envelope>`;
 }
-async function enviarParaSefazGo(xmlAssinado, ambiente) {
+async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
     const url = ambiente === 1
         ? SEFAZ_GO.autorizacaoProducao
         : SEFAZ_GO.autorizacaoHomologacao;
@@ -244,9 +245,16 @@ async function enviarParaSefazGo(xmlAssinado, ambiente) {
     console.log("========== XML ENVIADO SEFAZ ==========");
     console.log(xmlAssinado);
     console.log("========== FIM XML ENVIADO ==========");
+    const httpsAgent = new https_1.default.Agent({
+        pfx: certBuffer,
+        passphrase: senha,
+        rejectUnauthorized: false
+    });
     const response = await axios_1.default.post(url, soapBody, {
+        httpsAgent,
         headers: {
-            "Content-Type": "application/soap+xml; charset=utf-8"
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            Accept: "application/soap+xml, text/plain, */*"
         },
         timeout: 30000
     });
@@ -343,7 +351,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         validarCertificadoP12(certBuffer, payload.certificado.senha);
         const { xml, chave } = gerarXmlBase(payload);
         const xmlAssinado = assinarXmlNfce(xml, certInfo.certPem, certInfo.keyPem);
-        const xmlRetorno = await enviarParaSefazGo(xmlAssinado, Number(payload.ambiente || 2));
+        const xmlRetorno = await enviarParaSefazGo(xmlAssinado, Number(payload.ambiente || 2), certBuffer, payload.certificado.senha);
         const retorno = extrairAutorizacao(xmlRetorno);
         if (retorno.cStat !== "100") {
             return res.status(400).json({

@@ -6,6 +6,7 @@ import { create } from "xmlbuilder2";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import axios from "axios";
+import https from "https";
 import { XMLParser } from "fast-xml-parser";
 import { SignedXml } from "xml-crypto";
 
@@ -274,7 +275,12 @@ function montarSoapAutorizacao(xmlAssinado: string) {
 </soap12:Envelope>`;
 }
 
-async function enviarParaSefazGo(xmlAssinado: string, ambiente: number) {
+async function enviarParaSefazGo(
+  xmlAssinado: string,
+  ambiente: number,
+  certBuffer: Buffer,
+  senha: string
+) {
   const url =
     ambiente === 1
       ? SEFAZ_GO.autorizacaoProducao
@@ -286,9 +292,17 @@ async function enviarParaSefazGo(xmlAssinado: string, ambiente: number) {
   console.log(xmlAssinado);
   console.log("========== FIM XML ENVIADO ==========");
 
+  const httpsAgent = new https.Agent({
+    pfx: certBuffer,
+    passphrase: senha,
+    rejectUnauthorized: false
+  });
+
   const response = await axios.post(url, soapBody, {
+    httpsAgent,
     headers: {
-      "Content-Type": "application/soap+xml; charset=utf-8"
+      "Content-Type": "application/soap+xml; charset=utf-8",
+      Accept: "application/soap+xml, text/plain, */*"
     },
     timeout: 30000
   });
@@ -413,7 +427,13 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const { xml, chave } = gerarXmlBase(payload);
     const xmlAssinado = assinarXmlNfce(xml, certInfo.certPem, certInfo.keyPem);
 
-    const xmlRetorno = await enviarParaSefazGo(xmlAssinado, Number(payload.ambiente || 2));
+    const xmlRetorno = await enviarParaSefazGo(
+      xmlAssinado,
+      Number(payload.ambiente || 2),
+      certBuffer,
+      payload.certificado.senha
+    );
+
     const retorno = extrairAutorizacao(xmlRetorno);
 
     if (retorno.cStat !== "100") {
