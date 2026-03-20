@@ -49,13 +49,19 @@ function extrairCertificadoEChave(buffer: Buffer, senha: string) {
 
     const certBags =
       p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
+
     const keyBags =
       p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
         forge.pki.oids.pkcs8ShroudedKeyBag
       ] || [];
 
-    if (!certBags.length) throw new Error("Nenhum certificado encontrado no .p12/.pfx");
-    if (!keyBags.length) throw new Error("Nenhuma chave privada encontrada no .p12/.pfx");
+    if (!certBags.length) {
+      throw new Error("Nenhum certificado encontrado no .p12/.pfx");
+    }
+
+    if (!keyBags.length) {
+      throw new Error("Nenhuma chave privada encontrada no .p12/.pfx");
+    }
 
     const cert = certBags[0].cert;
     const key = keyBags[0].key;
@@ -90,6 +96,7 @@ function gerarChaveFake(payload: any, cNF: string) {
   const mod = String(payload.modelo || 65);
   const serie = String(payload.serie || 1);
   const numero = String(payload.numero || 1);
+
   return `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}1${cNF}0`;
 }
 
@@ -106,7 +113,7 @@ function gerarXmlBase(payload: any) {
 
   const chave = gerarChaveFake(payload, cNF);
 
-  const root = create({ version: "1.0", encoding: "UTF-8" })
+  const root = create()
     .ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
 
   const infNFe = root.ele("infNFe", {
@@ -158,7 +165,9 @@ function gerarXmlBase(payload: any) {
   if (payload.destinatario?.cpf) {
     const dest = infNFe.ele("dest");
     dest.ele("CPF").txt(onlyNumbers(payload.destinatario.cpf));
-    if (payload.destinatario.nome) dest.ele("xNome").txt(payload.destinatario.nome);
+    if (payload.destinatario.nome) {
+      dest.ele("xNome").txt(payload.destinatario.nome);
+    }
     dest.ele("indIEDest").txt("9");
   }
 
@@ -235,13 +244,14 @@ function gerarXmlBase(payload: any) {
   const infAdic = infNFe.ele("infAdic");
   infAdic.ele("infCpl").txt(payload.informacoes_complementares || "");
 
-  const xml = root.end({ prettyPrint: false });
+  const xml = root.end({ headless: true, prettyPrint: false });
   return { xml, chave };
 }
 
 function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
-  const sig = new SignedXml();
+  const xmlLimpo = xml.replace(/<\?xml[^>]*\?>/i, "").trim();
 
+  const sig = new SignedXml();
   sig.privateKey = keyPem;
   sig.publicCert = certPem;
   sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
@@ -256,10 +266,10 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
     digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
   });
 
-  sig.computeSignature(xml, {
+  sig.computeSignature(xmlLimpo, {
     location: {
       reference: "//*[local-name(.)='infNFe']",
-      action: "append",
+      action: "after",
     },
   });
 
@@ -281,9 +291,7 @@ function montarSoapAutorizacao(xmlAssinado: string) {
   const nfeXml = extrairApenasNFe(xmlAssinado);
 
   return `<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
     <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
       <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
