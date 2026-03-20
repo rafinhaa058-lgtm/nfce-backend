@@ -232,7 +232,11 @@ function montarSoapAutorizacao(xmlAssinado) {
                  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
     <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      ${xmlAssinado}
+      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <idLote>1</idLote>
+        <indSinc>1</indSinc>
+        ${xmlAssinado}
+      </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
 </soap12:Envelope>`;
@@ -243,25 +247,51 @@ async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
         : SEFAZ_GO.autorizacaoHomologacao;
     const soapBody = montarSoapAutorizacao(xmlAssinado);
     console.log("========== XML ENVIADO SEFAZ ==========");
-    console.log(xmlAssinado);
+    console.log(soapBody);
     console.log("========== FIM XML ENVIADO ==========");
     const httpsAgent = new https_1.default.Agent({
         pfx: certBuffer,
         passphrase: senha,
-        rejectUnauthorized: false
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.2",
+        keepAlive: false
     });
-    const response = await axios_1.default.post(url, soapBody, {
-        httpsAgent,
-        headers: {
-            "Content-Type": "application/soap+xml; charset=utf-8",
-            Accept: "application/soap+xml, text/plain, */*"
-        },
-        timeout: 30000
-    });
-    console.log("========== RESPOSTA SEFAZ BRUTA ==========");
-    console.log(response.data);
-    console.log("========== FIM RESPOSTA SEFAZ ==========");
-    return response.data;
+    try {
+        const response = await axios_1.default.post(url, soapBody, {
+            httpsAgent,
+            headers: {
+                "Content-Type": "application/soap+xml; charset=utf-8",
+                Accept: "application/soap+xml, text/plain, */*",
+                SOAPAction: ""
+            },
+            timeout: 30000,
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            validateStatus: () => true
+        });
+        console.log("========== STATUS HTTP SEFAZ ==========");
+        console.log(response.status);
+        console.log("========== RESPOSTA SEFAZ BRUTA ==========");
+        console.log(response.data);
+        console.log("========== FIM RESPOSTA SEFAZ ==========");
+        if (response.status >= 400) {
+            throw new Error(`SEFAZ retornou HTTP ${response.status}: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
+        }
+        return typeof response.data === "string" ? response.data : JSON.stringify(response.data);
+    }
+    catch (error) {
+        console.error("========== ERRO DETALHADO SEFAZ ==========");
+        if (error.response) {
+            console.error("STATUS:", error.response.status);
+            console.error("HEADERS:", error.response.headers);
+            console.error("DATA:", error.response.data);
+        }
+        else {
+            console.error(error);
+        }
+        console.error("========== FIM ERRO DETALHADO ==========");
+        throw error;
+    }
 }
 function extrairAutorizacao(xmlRetorno) {
     const parser = new fast_xml_parser_1.XMLParser({
