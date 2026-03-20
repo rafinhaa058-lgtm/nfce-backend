@@ -37,6 +37,8 @@ const supabase = createClient(
 const XML_BUCKET = process.env.SUPABASE_XML_BUCKET || "fiscal-xml";
 const DANFE_BUCKET = process.env.SUPABASE_DANFE_BUCKET || "fiscal-danfe";
 const CERT_BUCKET = process.env.SUPABASE_CERT_BUCKET || "fiscal-certificados";
+const STORAGE_API_URL =
+  process.env.SUPABASE_STORAGE_URL || `${SUPABASE_URL}/storage/v1`;
 
 function onlyNumbers(value: unknown) {
   return String(value || "").replace(/\D/g, "");
@@ -287,30 +289,43 @@ async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: strin
 }
 
 async function uploadTexto(bucket: string, path: string, content: string, contentType: string) {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(path, Buffer.from(content, "utf-8"), {
-      upsert: true,
-      contentType
-    });
+  const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
 
-  if (error) {
-    throw new Error(`Erro ao enviar arquivo para ${bucket}: ${error.message}`);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      "Content-Type": contentType,
+      "x-upsert": "true"
+    },
+    body: Buffer.from(content, "utf-8")
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
   }
 }
 
 async function uploadBase64(bucket: string, path: string, base64: string, contentType: string) {
   const buffer = Buffer.from(base64, "base64");
+  const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
 
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(path, buffer, {
-      upsert: true,
-      contentType
-    });
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      "Content-Type": contentType,
+      "x-upsert": "true"
+    },
+    body: buffer
+  });
 
-  if (error) {
-    throw new Error(`Erro ao enviar arquivo para ${bucket}: ${error.message}`);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
   }
 }
 

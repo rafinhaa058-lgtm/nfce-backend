@@ -31,6 +31,7 @@ const supabase = (0, supabase_js_1.createClient)(SUPABASE_URL, SUPABASE_SERVICE_
 const XML_BUCKET = process.env.SUPABASE_XML_BUCKET || "fiscal-xml";
 const DANFE_BUCKET = process.env.SUPABASE_DANFE_BUCKET || "fiscal-danfe";
 const CERT_BUCKET = process.env.SUPABASE_CERT_BUCKET || "fiscal-certificados";
+const STORAGE_API_URL = process.env.SUPABASE_STORAGE_URL || `${SUPABASE_URL}/storage/v1`;
 function onlyNumbers(value) {
     return String(value || "").replace(/\D/g, "");
 }
@@ -232,26 +233,38 @@ async function gerarDanfeBase64(payload, numero, chaveAcesso) {
     return pdfBuffer.toString("base64");
 }
 async function uploadTexto(bucket, path, content, contentType) {
-    const { error } = await supabase.storage
-        .from(bucket)
-        .upload(path, Buffer.from(content, "utf-8"), {
-        upsert: true,
-        contentType
+    const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            "Content-Type": contentType,
+            "x-upsert": "true"
+        },
+        body: Buffer.from(content, "utf-8")
     });
-    if (error) {
-        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${error.message}`);
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
     }
 }
 async function uploadBase64(bucket, path, base64, contentType) {
     const buffer = Buffer.from(base64, "base64");
-    const { error } = await supabase.storage
-        .from(bucket)
-        .upload(path, buffer, {
-        upsert: true,
-        contentType
+    const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_SERVICE_ROLE_KEY,
+            "Content-Type": contentType,
+            "x-upsert": "true"
+        },
+        body: buffer
     });
-    if (error) {
-        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${error.message}`);
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
     }
 }
 app.get("/", (_req, res) => {
