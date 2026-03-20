@@ -21,7 +21,13 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
 }
-const supabase = (0, supabase_js_1.createClient)(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const supabase = (0, supabase_js_1.createClient)(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    global: {
+        headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+        }
+    }
+});
 const XML_BUCKET = process.env.SUPABASE_XML_BUCKET || "fiscal-xml";
 const DANFE_BUCKET = process.env.SUPABASE_DANFE_BUCKET || "fiscal-danfe";
 const CERT_BUCKET = process.env.SUPABASE_CERT_BUCKET || "fiscal-certificados";
