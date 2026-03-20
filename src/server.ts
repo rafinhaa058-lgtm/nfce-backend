@@ -263,6 +263,10 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
 }
 
 function montarSoapAutorizacao(xmlAssinado: string) {
+  const xmlLimpo = xmlAssinado
+    .replace(/<\?xml[^>]*\?>/i, "")
+    .trim();
+
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
@@ -272,7 +276,7 @@ function montarSoapAutorizacao(xmlAssinado: string) {
       <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${xmlAssinado}
+        ${xmlLimpo}
       </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
