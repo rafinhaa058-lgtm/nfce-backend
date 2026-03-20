@@ -5,14 +5,25 @@ import forge from "node-forge";
 import { create } from "xmlbuilder2";
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import axios from "axios";
+import { XMLParser } from "fast-xml-parser";
+import { SignedXml } from "xml-crypto";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "30mb" }));
 
 const PORT = Number(process.env.PORT || 3000);
+
+// =========================
+// CONFIG SEFAZ GO
+// =========================
+const SEFAZ_GO = {
+  autorizacaoProducao: "https://nfe.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
+  autorizacaoHomologacao: "https://homolog.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
+};
 
 function onlyNumbers(value: unknown) {
   return String(value || "").replace(/\D/g, "");
@@ -25,32 +36,60 @@ function safeNumber(value: unknown, fallback = 0) {
 
 async function obterCertificadoBuffer(payload: any) {
   if (payload?.certificado?.pfx_base64) {
-    console.log("Usando certificado via pfx_base64");
     return Buffer.from(payload.certificado.pfx_base64, "base64");
   }
-
   throw new Error("Certificado não informado. Envie certificado.pfx_base64");
 }
 
-function validarCertificadoP12(buffer: Buffer, senha: string) {
-  const p12Der = forge.util.createBuffer(buffer.toString("binary"));
-  const p12Asn1 = forge.asn1.fromDer(p12Der);
-  const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
+function extrairCertificadoEChave(buffer: Buffer, senha: string) {
+  try {
+    const p12Der = forge.util.createBuffer(buffer.toString("binary"));
+    const p12Asn1 = forge.asn1.fromDer(p12Der);
+    const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
 
-  const bags = p12.getBags({ bagType: forge.pki.oids.certBag });
-  const certBags = bags[forge.pki.oids.certBag] || [];
+    const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
+    const keyBags =
+      p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
+        forge.pki.oids.pkcs8ShroudedKeyBag
+      ] || [];
 
-  if (!certBags.length) {
-    throw new Error("Nenhum certificado encontrado no arquivo .p12/.pfx");
+    if (!certBags.length) throw new Error("Nenhum certificado encontrado no .p12/.pfx");
+    if (!keyBags.length) throw new Error("Nenhuma chave privada encontrada no .p12/.pfx");
+
+    const cert = certBags[0].cert;
+    const key = keyBags[0].key;
+
+    return {
+      cert,
+      key,
+      certPem: forge.pki.certificateToPem(cert),
+      keyPem: forge.pki.privateKeyToPem(key),
+      serialNumber: cert.serialNumber,
+      validFrom: cert.validity.notBefore,
+      validTo: cert.validity.notAfter,
+    };
+  } catch (error: any) {
+    throw new Error(`Erro ao ler certificado A1: ${error.message}`);
   }
+}
 
-  const cert = certBags[0].cert;
-
+function validarCertificadoP12(buffer: Buffer, senha: string) {
+  const data = extrairCertificadoEChave(buffer, senha);
   return {
-    serialNumber: cert.serialNumber,
-    validFrom: cert.validity.notBefore,
-    validTo: cert.validity.notAfter
+    serialNumber: data.serialNumber,
+    validFrom: data.validFrom,
+    validTo: data.validTo,
   };
+}
+
+function gerarChaveFake(payload: any, cNF: string) {
+  const cUF = "52";
+  const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
+  const cnpj = onlyNumbers(payload.emitente?.cnpj);
+  const mod = String(payload.modelo || 65);
+  const serie = String(payload.serie || 1);
+  const numero = String(payload.numero || 1);
+  return `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}1${cNF}0`;
 }
 
 function gerarXmlBase(payload: any) {
@@ -64,15 +103,14 @@ function gerarXmlBase(payload: any) {
   const cnpj = onlyNumbers(payload.emitente?.cnpj);
   const cMun = String(payload.emitente?.codigo_municipio || "5212501");
 
-  const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
-  const chaveFake = `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}1${cNF}0`;
+  const chave = gerarChaveFake(payload, cNF);
 
   const root = create({ version: "1.0", encoding: "UTF-8" })
     .ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
 
   const infNFe = root.ele("infNFe", {
     versao: "4.00",
-    Id: `NFe${chaveFake}`
+    Id: `NFe${chave}`
   });
 
   const ide = infNFe.ele("ide");
@@ -92,7 +130,7 @@ function gerarXmlBase(payload: any) {
   ide.ele("tpAmb").txt(tpAmb);
   ide.ele("finNFe").txt("1");
   ide.ele("indFinal").txt("1");
-  ide.ele("indPres").txt("4");
+  ide.ele("indPres").txt("1");
   ide.ele("procEmi").txt("0");
   ide.ele("verProc").txt("1.0.0");
 
@@ -102,14 +140,16 @@ function gerarXmlBase(payload: any) {
   emit.ele("xFant").txt(payload.emitente?.nome_fantasia || payload.emitente?.razao_social || "");
 
   const enderEmit = emit.ele("enderEmit");
-  enderEmit.ele("xLgr").txt("NAO INFORMADO");
-  enderEmit.ele("nro").txt("SN");
-  enderEmit.ele("xBairro").txt("CENTRO");
+  enderEmit.ele("xLgr").txt(payload.emitente?.logradouro || "NAO INFORMADO");
+  enderEmit.ele("nro").txt(payload.emitente?.numero || "SN");
+  enderEmit.ele("xBairro").txt(payload.emitente?.bairro || "CENTRO");
   enderEmit.ele("cMun").txt(cMun);
   enderEmit.ele("xMun").txt(payload.emitente?.cidade || "LUZIANIA");
   enderEmit.ele("UF").txt(payload.emitente?.uf || "GO");
+  enderEmit.ele("CEP").txt(onlyNumbers(payload.emitente?.cep || ""));
   enderEmit.ele("cPais").txt("1058");
   enderEmit.ele("xPais").txt("BRASIL");
+  enderEmit.ele("fone").txt(onlyNumbers(payload.emitente?.fone || ""));
 
   emit.ele("IE").txt(onlyNumbers(payload.emitente?.inscricao_estadual));
   emit.ele("CRT").txt(payload.emitente?.regime_tributario === "simples_nacional" ? "1" : "3");
@@ -117,9 +157,7 @@ function gerarXmlBase(payload: any) {
   if (payload.destinatario?.cpf) {
     const dest = infNFe.ele("dest");
     dest.ele("CPF").txt(onlyNumbers(payload.destinatario.cpf));
-    if (payload.destinatario.nome) {
-      dest.ele("xNome").txt(payload.destinatario.nome);
-    }
+    if (payload.destinatario.nome) dest.ele("xNome").txt(payload.destinatario.nome);
     dest.ele("indIEDest").txt("9");
   }
 
@@ -194,14 +232,93 @@ function gerarXmlBase(payload: any) {
   detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, totalProdutos).toFixed(2));
 
   const infAdic = infNFe.ele("infAdic");
-  infAdic.ele("infCpl").txt(
-    tpAmb === "2"
-      ? "EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
-      : (payload.informacoes_complementares || "Pedido emitido pelo sistema")
-  );
+  infAdic.ele("infCpl").txt(payload.informacoes_complementares || "");
 
-  const xml = root.end({ prettyPrint: true });
-  return { xml, chaveFake };
+  const xml = root.end({ prettyPrint: false });
+  return { xml, chave };
+}
+
+function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
+  const sig = new SignedXml();
+
+  sig.privateKey = keyPem;
+  sig.publicCert = certPem;
+  sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
+  sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+
+  sig.addReference({
+    xpath: "//*[local-name(.)='infNFe']",
+    transforms: [
+      "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+      "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+    ],
+    digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256"
+  });
+
+  sig.computeSignature(xml, {
+    location: { reference: "//*[local-name(.)='infNFe']", action: "append" }
+  });
+
+  return sig.getSignedXml();
+}
+
+function montarSoapAutorizacao(xmlAssinado: string) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      ${xmlAssinado}
+    </nfeDadosMsg>
+  </soap12:Body>
+</soap12:Envelope>`;
+}
+
+async function enviarParaSefazGo(xmlAssinado: string, ambiente: number) {
+  const url =
+    ambiente === 1
+      ? SEFAZ_GO.autorizacaoProducao
+      : SEFAZ_GO.autorizacaoHomologacao;
+
+  const soapBody = montarSoapAutorizacao(xmlAssinado);
+
+  const response = await axios.post(url, soapBody, {
+    headers: {
+      "Content-Type": "application/soap+xml; charset=utf-8"
+    },
+    timeout: 30000
+  });
+
+  return response.data;
+}
+
+function extrairAutorizacao(xmlRetorno: string) {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_"
+  });
+
+  const parsed = parser.parse(xmlRetorno);
+  const raw = JSON.stringify(parsed);
+
+  const cStatMatch = raw.match(/"cStat":"?(\d+)"?/);
+  const xMotivoMatch = raw.match(/"xMotivo":"([^"]+)"/);
+  const nProtMatch = raw.match(/"nProt":"([^"]+)"/);
+  const chNFeMatch = raw.match(/"chNFe":"([^"]+)"/);
+
+  const cStat = cStatMatch?.[1] || "";
+  const xMotivo = xMotivoMatch?.[1] || "";
+  const nProt = nProtMatch?.[1] || "";
+  const chNFe = chNFeMatch?.[1] || "";
+
+  return {
+    cStat,
+    xMotivo,
+    nProt,
+    chNFe,
+    rawXml: xmlRetorno
+  };
 }
 
 async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: string) {
@@ -255,15 +372,11 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "nfce-backend" });
 });
 
-app.post("/nfce/emitir-teste", async (_req, res) => {
-  return res.json({
-    ok: true,
-    mensagem: "Rota de teste funcionando"
-  });
-});
-
-async function emitirNfceHandler(orderId: string, payload: any, res: express.Response) {
+app.post("/nfce/emitir/:orderId", async (req, res) => {
   try {
+    const orderId = req.params.orderId;
+    const payload = req.body;
+
     if (!orderId) {
       return res.status(400).json({
         autorizado: false,
@@ -281,18 +394,28 @@ async function emitirNfceHandler(orderId: string, payload: any, res: express.Res
     }
 
     const certBuffer = await obterCertificadoBuffer(payload);
+    const certInfo = extrairCertificadoEChave(certBuffer, payload.certificado.senha);
     validarCertificadoP12(certBuffer, payload.certificado.senha);
 
-    const { xml, chaveFake } = gerarXmlBase(payload);
+    const { xml, chave } = gerarXmlBase(payload);
+    const xmlAssinado = assinarXmlNfce(xml, certInfo.certPem, certInfo.keyPem);
+
+    const xmlRetorno = await enviarParaSefazGo(xmlAssinado, Number(payload.ambiente || 2));
+    const retorno = extrairAutorizacao(xmlRetorno);
+
+    if (retorno.cStat !== "100") {
+      return res.status(400).json({
+        autorizado: false,
+        status: "REJECTED",
+        motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
+        cStat: retorno.cStat,
+        resposta_xml: xmlRetorno
+      });
+    }
 
     const numero = Number(payload.numero || 1);
     const serie = Number(payload.serie || 1);
-
-    const chaveAcesso =
-      payload.ambiente === 2
-        ? chaveFake
-        : `5226${Date.now()}${String(numero).padStart(6, "0")}`;
-
+    const chaveAcesso = retorno.chNFe || chave;
     const danfeBase64 = await gerarDanfeBase64(payload, numero, chaveAcesso);
 
     return res.json({
@@ -301,38 +424,18 @@ async function emitirNfceHandler(orderId: string, payload: any, res: express.Res
       numero,
       serie,
       chave_acesso: chaveAcesso,
-      protocolo: payload.ambiente === 2 ? "HOMOLOGACAO-LOCAL" : "PRODUCAO-LOCAL",
-      xml_base64: Buffer.from(xml, "utf-8").toString("base64"),
+      protocolo: retorno.nProt,
+      xml_autorizado_base64: Buffer.from(xmlRetorno, "utf-8").toString("base64"),
       danfe_base64: danfeBase64
     });
   } catch (err: any) {
     console.error("Erro no backend fiscal:", err);
-
     return res.status(500).json({
       autorizado: false,
       status: "ERROR",
       motivo: err.message || "Erro interno no backend fiscal"
     });
   }
-}
-
-app.post("/nfce/emitir/:orderId", async (req, res) => {
-  return emitirNfceHandler(req.params.orderId, req.body, res);
-});
-
-app.post("/nfce/emitir-pedido/:pedidoId", async (req, res) => {
-  return emitirNfceHandler(req.params.pedidoId, req.body, res);
-});
-
-app.post("/nfce/provider-callback", async (req, res) => {
-  const auth = req.headers.authorization || "";
-  const expected = `Bearer ${process.env.FISCAL_PROVIDER_TOKEN}`;
-
-  if (auth !== expected) {
-    return res.status(401).json({ ok: false, error: "Não autorizado" });
-  }
-
-  return res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
