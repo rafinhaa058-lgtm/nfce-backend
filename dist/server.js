@@ -74,14 +74,27 @@ function validarCertificadoP12(buffer, senha) {
         validTo: data.validTo,
     };
 }
-function gerarChaveFake(payload, cNF) {
+function gerarChave(payload, cNF) {
     const cUF = "52";
     const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
     const cnpj = onlyNumbers(payload.emitente?.cnpj);
     const mod = String(payload.modelo || 65);
     const serie = String(payload.serie || 1);
     const numero = String(payload.numero || 1);
-    return `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}1${cNF}0`;
+    const tpEmis = "1";
+    const base = `${cUF}${aamm}${cnpj.padStart(14, "0")}${mod}${serie.padStart(3, "0")}${numero.padStart(9, "0")}${tpEmis}${cNF}`;
+    const dv = calcularDVChave(base);
+    return `${base}${dv}`;
+}
+function calcularDVChave(chave43) {
+    let peso = 2;
+    let soma = 0;
+    for (let i = chave43.length - 1; i >= 0; i--) {
+        soma += Number(chave43[i]) * peso;
+        peso = peso === 9 ? 2 : peso + 1;
+    }
+    const mod = soma % 11;
+    return mod === 0 || mod === 1 ? "0" : String(11 - mod);
 }
 function gerarXmlBase(payload) {
     const cUF = "52";
@@ -93,7 +106,8 @@ function gerarXmlBase(payload) {
     const numero = String(payload.numero || 1);
     const cnpj = onlyNumbers(payload.emitente?.cnpj);
     const cMun = String(payload.emitente?.codigo_municipio || "5212501");
-    const chave = gerarChaveFake(payload, cNF);
+    const chave = gerarChave(payload, cNF);
+    const dv = chave.slice(-1);
     const root = (0, xmlbuilder2_1.create)().ele("NFe", {
         xmlns: "http://www.portalfiscal.inf.br/nfe",
     });
@@ -114,7 +128,7 @@ function gerarXmlBase(payload) {
     ide.ele("cMunFG").txt(cMun);
     ide.ele("tpImp").txt("4");
     ide.ele("tpEmis").txt("1");
-    ide.ele("cDV").txt("0");
+    ide.ele("cDV").txt(dv);
     ide.ele("tpAmb").txt(tpAmb);
     ide.ele("finNFe").txt("1");
     ide.ele("indFinal").txt("1");
@@ -206,9 +220,13 @@ function gerarXmlBase(payload) {
     detPag.ele("tPag").txt(payload.pagamento?.forma_codigo || "01");
     detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, totalProdutos).toFixed(2));
     const infAdic = infNFe.ele("infAdic");
-    infAdic.ele("infCpl").txt(payload.informacoes_complementares || "");
-    const xml = root.end({ headless: true, prettyPrint: false });
-    return { xml, chave };
+    infAdic.ele("infCpl").txt(tpAmb === "2"
+        ? "EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
+        : (payload.informacoes_complementares || ""));
+    return {
+        xml: root.end({ headless: true, prettyPrint: false }),
+        chave,
+    };
 }
 function assinarXmlNfce(xml, certPem, keyPem) {
     const xmlLimpo = xml.replace(/<\?xml[^>]*\?>/i, "").trim();
@@ -277,41 +295,26 @@ async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
         minVersion: "TLSv1.2",
         keepAlive: false,
     });
-    try {
-        const response = await axios_1.default.post(url, soapBody, {
-            httpsAgent,
-            headers: {
-                "Content-Type": "application/soap+xml; charset=utf-8",
-                Accept: "application/soap+xml, text/plain, */*",
-            },
-            timeout: 30000,
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
-            validateStatus: () => true,
-        });
-        console.log("========== STATUS HTTP SEFAZ ==========");
-        console.log(response.status);
-        console.log("========== RESPOSTA SEFAZ BRUTA ==========");
-        console.log(response.data);
-        console.log("========== FIM RESPOSTA SEFAZ ==========");
-        if (response.status >= 400) {
-            throw new Error(`SEFAZ retornou HTTP ${response.status}: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
-        }
-        return typeof response.data === "string" ? response.data : JSON.stringify(response.data);
+    const response = await axios_1.default.post(url, soapBody, {
+        httpsAgent,
+        headers: {
+            "Content-Type": "application/soap+xml; charset=utf-8",
+            Accept: "application/soap+xml, text/plain, */*",
+        },
+        timeout: 30000,
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        validateStatus: () => true,
+    });
+    console.log("========== STATUS HTTP SEFAZ ==========");
+    console.log(response.status);
+    console.log("========== RESPOSTA SEFAZ BRUTA ==========");
+    console.log(response.data);
+    console.log("========== FIM RESPOSTA SEFAZ ==========");
+    if (response.status >= 400) {
+        throw new Error(`SEFAZ retornou HTTP ${response.status}: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`);
     }
-    catch (error) {
-        console.error("========== ERRO DETALHADO SEFAZ ==========");
-        if (error.response) {
-            console.error("STATUS:", error.response.status);
-            console.error("HEADERS:", error.response.headers);
-            console.error("DATA:", error.response.data);
-        }
-        else {
-            console.error(error);
-        }
-        console.error("========== FIM ERRO DETALHADO ==========");
-        throw error;
-    }
+    return typeof response.data === "string" ? response.data : JSON.stringify(response.data);
 }
 function extrairAutorizacao(xmlRetorno) {
     const parser = new fast_xml_parser_1.XMLParser({
