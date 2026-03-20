@@ -24,6 +24,12 @@ const SEFAZ_GO = {
 };
 
 const CEP_PADRAO = "72856472";
+const CIDADE_PADRAO = "LUZIANIA";
+const UF_PADRAO = "GO";
+const LOGRADOURO_PADRAO = "RUA MONÇÃO";
+const NUMERO_PADRAO = "30";
+const BAIRRO_PADRAO = "CENTRO";
+const CODIGO_MUNICIPIO_PADRAO = "5212501";
 
 function onlyNumbers(value: unknown) {
   return String(value ?? "").replace(/\D/g, "");
@@ -41,6 +47,19 @@ function pad(value: string | number, size: number) {
 function normalizarCep(value: unknown) {
   const cep = onlyNumbers(value);
   return cep.length === 8 ? cep : CEP_PADRAO;
+}
+
+function calcularDVChave(chave43: string) {
+  let peso = 2;
+  let soma = 0;
+
+  for (let i = chave43.length - 1; i >= 0; i--) {
+    soma += Number(chave43[i]) * peso;
+    peso = peso === 9 ? 2 : peso + 1;
+  }
+
+  const mod = soma % 11;
+  return mod === 0 || mod === 1 ? "0" : String(11 - mod);
 }
 
 async function obterCertificadoBuffer(payload: any) {
@@ -100,19 +119,6 @@ function validarCertificadoP12(buffer: Buffer, senha: string) {
   };
 }
 
-function calcularDVChave(chave43: string) {
-  let peso = 2;
-  let soma = 0;
-
-  for (let i = chave43.length - 1; i >= 0; i--) {
-    soma += Number(chave43[i]) * peso;
-    peso = peso === 9 ? 2 : peso + 1;
-  }
-
-  const mod = soma % 11;
-  return mod === 0 || mod === 1 ? "0" : String(11 - mod);
-}
-
 function gerarChave(payload: any, cNF: string) {
   const cUF = "52";
   const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
@@ -137,21 +143,30 @@ function gerarXmlBase(payload: any) {
   const serie = String(payload.serie || 1);
   const numero = String(payload.numero || 1);
   const cnpj = onlyNumbers(payload.emitente?.cnpj);
-  const cMun = String(payload.emitente?.codigo_municipio || "5212501");
+  const cMun = String(payload.emitente?.codigo_municipio || CODIGO_MUNICIPIO_PADRAO);
   const chave = gerarChave(payload, cNF);
   const dv = chave.slice(-1);
 
   const cep = normalizarCep(payload.emitente?.cep);
   const ie = onlyNumbers(payload.emitente?.inscricao_estadual || "");
   const fone = onlyNumbers(payload.emitente?.fone || "");
+  const logradouro = payload.emitente?.logradouro || LOGRADOURO_PADRAO;
+  const numeroEndereco = payload.emitente?.numero || NUMERO_PADRAO;
+  const bairro = payload.emitente?.bairro || BAIRRO_PADRAO;
+  const cidade = payload.emitente?.cidade || CIDADE_PADRAO;
+  const uf = payload.emitente?.uf || UF_PADRAO;
+  const razaoSocial = payload.emitente?.razao_social || payload.emitente?.nome_fantasia || "";
+
+  console.log("CEP RECEBIDO:", payload.emitente?.cep);
+  console.log("CEP NORMALIZADO:", cep);
+  console.log("LOGRADOURO FINAL:", logradouro);
+  console.log("BAIRRO FINAL:", bairro);
+  console.log("CIDADE FINAL:", cidade);
+  console.log("UF FINAL:", uf);
 
   if (!cnpj) throw new Error("emitente.cnpj é obrigatório");
   if (!ie) throw new Error("emitente.inscricao_estadual é obrigatória");
-  if (!payload.emitente?.razao_social) throw new Error("emitente.razao_social é obrigatória");
-  if (!payload.emitente?.logradouro) throw new Error("emitente.logradouro é obrigatório");
-  if (!payload.emitente?.bairro) throw new Error("emitente.bairro é obrigatório");
-  if (!payload.emitente?.cidade) throw new Error("emitente.cidade é obrigatória");
-  if (!payload.emitente?.uf) throw new Error("emitente.uf é obrigatória");
+  if (!razaoSocial) throw new Error("emitente.razao_social é obrigatória");
 
   const root = create().ele("NFe", {
     xmlns: "http://www.portalfiscal.inf.br/nfe",
@@ -185,21 +200,21 @@ function gerarXmlBase(payload: any) {
 
   const emit = infNFe.ele("emit");
   emit.ele("CNPJ").txt(cnpj);
-  emit.ele("xNome").txt(payload.emitente.razao_social);
+  emit.ele("xNome").txt(razaoSocial);
   if (payload.emitente?.nome_fantasia) {
     emit.ele("xFant").txt(payload.emitente.nome_fantasia);
   }
 
   const enderEmit = emit.ele("enderEmit");
-  enderEmit.ele("xLgr").txt(payload.emitente.logradouro);
-  enderEmit.ele("nro").txt(payload.emitente.numero || "SN");
+  enderEmit.ele("xLgr").txt(logradouro);
+  enderEmit.ele("nro").txt(numeroEndereco);
   if (payload.emitente?.complemento) {
     enderEmit.ele("xCpl").txt(payload.emitente.complemento);
   }
-  enderEmit.ele("xBairro").txt(payload.emitente.bairro);
+  enderEmit.ele("xBairro").txt(bairro);
   enderEmit.ele("cMun").txt(cMun);
-  enderEmit.ele("xMun").txt(payload.emitente.cidade);
-  enderEmit.ele("UF").txt(payload.emitente.uf);
+  enderEmit.ele("xMun").txt(cidade);
+  enderEmit.ele("UF").txt(uf);
   enderEmit.ele("CEP").txt(cep);
   enderEmit.ele("cPais").txt("1058");
   enderEmit.ele("xPais").txt("BRASIL");
@@ -517,6 +532,9 @@ app.get("/health", (_req, res) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   try {
+    console.log("📦 PAYLOAD RECEBIDO:");
+    console.log(JSON.stringify(req.body, null, 2));
+
     const orderId = req.params.orderId;
     const payload = req.body;
 
