@@ -96,7 +96,7 @@ function gerarXmlBase(payload) {
         .ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", {
         versao: "4.00",
-        Id: `NFe${chave}`
+        Id: `NFe${chave}`,
     });
     const ide = infNFe.ele("ide");
     ide.ele("cUF").txt(cUF);
@@ -216,19 +216,28 @@ function assinarXmlNfce(xml, certPem, keyPem) {
         xpath: "//*[local-name(.)='infNFe']",
         transforms: [
             "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
-            "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+            "http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
         ],
-        digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256"
+        digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
     });
     sig.computeSignature(xml, {
-        location: { reference: "//*[local-name(.)='infNFe']", action: "append" }
+        location: {
+            reference: "//*[local-name(.)='infNFe']",
+            action: "append",
+        },
     });
     return sig.getSignedXml();
 }
+function extrairApenasNFe(xmlAssinado) {
+    const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
+    const match = xmlSemDeclaracao.match(/<NFe[\s\S]*<\/NFe>/i);
+    if (!match) {
+        throw new Error("Não foi possível extrair o bloco <NFe> assinado");
+    }
+    return match[0];
+}
 function montarSoapAutorizacao(xmlAssinado) {
-    const xmlLimpo = xmlAssinado
-        .replace(/<\?xml[^>]*\?>/i, "")
-        .trim();
+    const nfeXml = extrairApenasNFe(xmlAssinado);
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
@@ -238,7 +247,7 @@ function montarSoapAutorizacao(xmlAssinado) {
       <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${xmlLimpo}
+        ${nfeXml}
       </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
@@ -257,7 +266,7 @@ async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
         passphrase: senha,
         rejectUnauthorized: false,
         minVersion: "TLSv1.2",
-        keepAlive: false
+        keepAlive: false,
     });
     try {
         const response = await axios_1.default.post(url, soapBody, {
@@ -265,12 +274,11 @@ async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
             headers: {
                 "Content-Type": "application/soap+xml; charset=utf-8",
                 Accept: "application/soap+xml, text/plain, */*",
-                SOAPAction: ""
             },
             timeout: 30000,
             maxBodyLength: Infinity,
             maxContentLength: Infinity,
-            validateStatus: () => true
+            validateStatus: () => true,
         });
         console.log("========== STATUS HTTP SEFAZ ==========");
         console.log(response.status);
@@ -299,7 +307,7 @@ async function enviarParaSefazGo(xmlAssinado, ambiente, certBuffer, senha) {
 function extrairAutorizacao(xmlRetorno) {
     const parser = new fast_xml_parser_1.XMLParser({
         ignoreAttributes: false,
-        attributeNamePrefix: "@_"
+        attributeNamePrefix: "@_",
     });
     const parsed = parser.parse(xmlRetorno);
     const raw = JSON.stringify(parsed);
@@ -316,7 +324,7 @@ function extrairAutorizacao(xmlRetorno) {
         xMotivo,
         nProt,
         chNFe,
-        rawXml: xmlRetorno
+        rawXml: xmlRetorno,
     };
     console.log("========== RESUMO SEFAZ ==========");
     console.log(resumo);
@@ -369,14 +377,14 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
             return res.status(400).json({
                 autorizado: false,
                 status: "ERROR",
-                motivo: "orderId não informado"
+                motivo: "orderId não informado",
             });
         }
         if (!payload?.emitente?.cnpj || !payload?.certificado?.senha) {
             return res.status(400).json({
                 autorizado: false,
                 status: "ERROR",
-                motivo: "Payload fiscal incompleto"
+                motivo: "Payload fiscal incompleto",
             });
         }
         const certBuffer = await obterCertificadoBuffer(payload);
@@ -393,7 +401,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
                 motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
                 cStat: retorno.cStat,
                 resposta_xml: xmlRetorno,
-                sefaz_debug: retorno
+                sefaz_debug: retorno,
             });
         }
         const numero = Number(payload.numero || 1);
@@ -413,8 +421,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
                 cStat: retorno.cStat,
                 xMotivo: retorno.xMotivo,
                 nProt: retorno.nProt,
-                chNFe: retorno.chNFe
-            }
+                chNFe: retorno.chNFe,
+            },
         });
     }
     catch (err) {
@@ -422,7 +430,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         return res.status(500).json({
             autorizado: false,
             status: "ERROR",
-            motivo: err.message || "Erro interno no backend fiscal"
+            motivo: err.message || "Erro interno no backend fiscal",
         });
     }
 });

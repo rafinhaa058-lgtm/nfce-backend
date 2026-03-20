@@ -47,7 +47,8 @@ function extrairCertificadoEChave(buffer: Buffer, senha: string) {
     const p12Asn1 = forge.asn1.fromDer(p12Der);
     const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, senha);
 
-    const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
+    const certBags =
+      p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
     const keyBags =
       p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
         forge.pki.oids.pkcs8ShroudedKeyBag
@@ -110,7 +111,7 @@ function gerarXmlBase(payload: any) {
 
   const infNFe = root.ele("infNFe", {
     versao: "4.00",
-    Id: `NFe${chave}`
+    Id: `NFe${chave}`,
   });
 
   const ide = infNFe.ele("ide");
@@ -250,22 +251,34 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
     xpath: "//*[local-name(.)='infNFe']",
     transforms: [
       "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
-      "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+      "http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
     ],
-    digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256"
+    digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
   });
 
   sig.computeSignature(xml, {
-    location: { reference: "//*[local-name(.)='infNFe']", action: "append" }
+    location: {
+      reference: "//*[local-name(.)='infNFe']",
+      action: "append",
+    },
   });
 
   return sig.getSignedXml();
 }
 
+function extrairApenasNFe(xmlAssinado: string) {
+  const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
+  const match = xmlSemDeclaracao.match(/<NFe[\s\S]*<\/NFe>/i);
+
+  if (!match) {
+    throw new Error("Não foi possível extrair o bloco <NFe> assinado");
+  }
+
+  return match[0];
+}
+
 function montarSoapAutorizacao(xmlAssinado: string) {
-  const xmlLimpo = xmlAssinado
-    .replace(/<\?xml[^>]*\?>/i, "")
-    .trim();
+  const nfeXml = extrairApenasNFe(xmlAssinado);
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -276,7 +289,7 @@ function montarSoapAutorizacao(xmlAssinado: string) {
       <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${xmlLimpo}
+        ${nfeXml}
       </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
@@ -305,7 +318,7 @@ async function enviarParaSefazGo(
     passphrase: senha,
     rejectUnauthorized: false,
     minVersion: "TLSv1.2",
-    keepAlive: false
+    keepAlive: false,
   });
 
   try {
@@ -314,12 +327,11 @@ async function enviarParaSefazGo(
       headers: {
         "Content-Type": "application/soap+xml; charset=utf-8",
         Accept: "application/soap+xml, text/plain, */*",
-        SOAPAction: ""
       },
       timeout: 30000,
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      validateStatus: () => true
+      validateStatus: () => true,
     });
 
     console.log("========== STATUS HTTP SEFAZ ==========");
@@ -330,7 +342,9 @@ async function enviarParaSefazGo(
 
     if (response.status >= 400) {
       throw new Error(
-        `SEFAZ retornou HTTP ${response.status}: ${typeof response.data === "string" ? response.data : JSON.stringify(response.data)}`
+        `SEFAZ retornou HTTP ${response.status}: ${
+          typeof response.data === "string" ? response.data : JSON.stringify(response.data)
+        }`
       );
     }
 
@@ -352,7 +366,7 @@ async function enviarParaSefazGo(
 function extrairAutorizacao(xmlRetorno: string) {
   const parser = new XMLParser({
     ignoreAttributes: false,
-    attributeNamePrefix: "@_"
+    attributeNamePrefix: "@_",
   });
 
   const parsed = parser.parse(xmlRetorno);
@@ -373,7 +387,7 @@ function extrairAutorizacao(xmlRetorno: string) {
     xMotivo,
     nProt,
     chNFe,
-    rawXml: xmlRetorno
+    rawXml: xmlRetorno,
   };
 
   console.log("========== RESUMO SEFAZ ==========");
@@ -404,7 +418,9 @@ async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: strin
   doc.text("Itens:");
   for (const item of payload.itens || []) {
     doc.text(
-      `${item.numero_item}. ${item.descricao} | Qtd: ${item.quantidade} | Unit: ${safeNumber(item.valor_unitario).toFixed(2)} | Total: ${safeNumber(item.valor_total).toFixed(2)}`
+      `${item.numero_item}. ${item.descricao} | Qtd: ${item.quantidade} | Unit: ${safeNumber(
+        item.valor_unitario
+      ).toFixed(2)} | Total: ${safeNumber(item.valor_total).toFixed(2)}`
     );
   }
 
@@ -443,7 +459,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       return res.status(400).json({
         autorizado: false,
         status: "ERROR",
-        motivo: "orderId não informado"
+        motivo: "orderId não informado",
       });
     }
 
@@ -451,7 +467,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       return res.status(400).json({
         autorizado: false,
         status: "ERROR",
-        motivo: "Payload fiscal incompleto"
+        motivo: "Payload fiscal incompleto",
       });
     }
 
@@ -478,7 +494,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
         cStat: retorno.cStat,
         resposta_xml: xmlRetorno,
-        sefaz_debug: retorno
+        sefaz_debug: retorno,
       });
     }
 
@@ -500,15 +516,15 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         cStat: retorno.cStat,
         xMotivo: retorno.xMotivo,
         nProt: retorno.nProt,
-        chNFe: retorno.chNFe
-      }
+        chNFe: retorno.chNFe,
+      },
     });
   } catch (err: any) {
     console.error("Erro no backend fiscal:", err);
     return res.status(500).json({
       autorizado: false,
       status: "ERROR",
-      motivo: err.message || "Erro interno no backend fiscal"
+      motivo: err.message || "Erro interno no backend fiscal",
     });
   }
 });
