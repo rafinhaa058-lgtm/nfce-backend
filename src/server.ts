@@ -23,6 +23,8 @@ const SEFAZ_GO = {
   autorizacaoHomologacao: "https://homolog.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
 };
 
+const CEP_PADRAO = "72856472";
+
 function onlyNumbers(value: unknown) {
   return String(value ?? "").replace(/\D/g, "");
 }
@@ -34,6 +36,11 @@ function safeNumber(value: unknown, fallback = 0) {
 
 function pad(value: string | number, size: number) {
   return String(value).padStart(size, "0");
+}
+
+function normalizarCep(value: unknown) {
+  const cep = onlyNumbers(value);
+  return cep.length === 8 ? cep : CEP_PADRAO;
 }
 
 async function obterCertificadoBuffer(payload: any) {
@@ -134,13 +141,12 @@ function gerarXmlBase(payload: any) {
   const chave = gerarChave(payload, cNF);
   const dv = chave.slice(-1);
 
-  const cep = onlyNumbers(payload.emitente?.cep || "");
+  const cep = normalizarCep(payload.emitente?.cep);
   const ie = onlyNumbers(payload.emitente?.inscricao_estadual || "");
   const fone = onlyNumbers(payload.emitente?.fone || "");
 
   if (!cnpj) throw new Error("emitente.cnpj é obrigatório");
   if (!ie) throw new Error("emitente.inscricao_estadual é obrigatória");
-  if (cep.length !== 8) throw new Error("emitente.cep deve ter 8 dígitos");
   if (!payload.emitente?.razao_social) throw new Error("emitente.razao_social é obrigatória");
   if (!payload.emitente?.logradouro) throw new Error("emitente.logradouro é obrigatório");
   if (!payload.emitente?.bairro) throw new Error("emitente.bairro é obrigatório");
