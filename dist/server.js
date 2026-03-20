@@ -6,7 +6,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
-const supabase_js_1 = require("@supabase/supabase-js");
 const node_forge_1 = __importDefault(require("node-forge"));
 const xmlbuilder2_1 = require("xmlbuilder2");
 const pdfkit_1 = __importDefault(require("pdfkit"));
@@ -16,22 +15,6 @@ const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 app.use(express_1.default.json({ limit: "20mb" }));
 const PORT = Number(process.env.PORT || 3000);
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios");
-}
-const supabase = (0, supabase_js_1.createClient)(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    global: {
-        headers: {
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
-        }
-    }
-});
-const XML_BUCKET = process.env.SUPABASE_XML_BUCKET || "fiscal-xml";
-const DANFE_BUCKET = process.env.SUPABASE_DANFE_BUCKET || "fiscal-danfe";
-const CERT_BUCKET = process.env.SUPABASE_CERT_BUCKET || "fiscal-certificados";
-const STORAGE_API_URL = process.env.SUPABASE_STORAGE_URL || `${SUPABASE_URL}/storage/v1`;
 function onlyNumbers(value) {
     return String(value || "").replace(/\D/g, "");
 }
@@ -39,23 +22,12 @@ function safeNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
 }
-async function baixarCertificado(path) {
-    const { data, error } = await supabase.storage.from(CERT_BUCKET).download(path);
-    if (error || !data) {
-        throw new Error(`Erro ao baixar certificado: ${error?.message || "arquivo não encontrado"}`);
-    }
-    return Buffer.from(await data.arrayBuffer());
-}
 async function obterCertificadoBuffer(payload) {
     if (payload?.certificado?.pfx_base64) {
         console.log("Usando certificado via pfx_base64");
         return Buffer.from(payload.certificado.pfx_base64, "base64");
     }
-    if (payload?.certificado?.path) {
-        console.log(`Baixando certificado do bucket: ${CERT_BUCKET}/${payload.certificado.path}`);
-        return await baixarCertificado(payload.certificado.path);
-    }
-    throw new Error("Certificado não informado. Envie certificado.pfx_base64 ou certificado.path");
+    throw new Error("Certificado não informado. Envie certificado.pfx_base64");
 }
 function validarCertificadoP12(buffer, senha) {
     const p12Der = node_forge_1.default.util.createBuffer(buffer.toString("binary"));
@@ -232,41 +204,6 @@ async function gerarDanfeBase64(payload, numero, chaveAcesso) {
     const pdfBuffer = await done;
     return pdfBuffer.toString("base64");
 }
-async function uploadTexto(bucket, path, content, contentType) {
-    const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            apikey: SUPABASE_SERVICE_ROLE_KEY,
-            "Content-Type": contentType,
-            "x-upsert": "true"
-        },
-        body: Buffer.from(content, "utf-8")
-    });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
-    }
-}
-async function uploadBase64(bucket, path, base64, contentType) {
-    const buffer = Buffer.from(base64, "base64");
-    const url = `${STORAGE_API_URL}/object/${bucket}/${path}`;
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            apikey: SUPABASE_SERVICE_ROLE_KEY,
-            "Content-Type": contentType,
-            "x-upsert": "true"
-        },
-        body: buffer
-    });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Erro ao enviar arquivo para ${bucket}: ${errorText}`);
-    }
-}
 app.get("/", (_req, res) => {
     res.send("Servidor fiscal rodando 🚀");
 });
@@ -303,12 +240,7 @@ async function emitirNfceHandler(orderId, payload, res) {
         const chaveAcesso = payload.ambiente === 2
             ? chaveFake
             : `5226${Date.now()}${String(numero).padStart(6, "0")}`;
-        const tenantId = payload.tenant_id || "sem-tenant";
-        const xmlPath = `${tenantId}/nfce_${numero}.xml`;
-        const danfePath = `${tenantId}/danfe_${numero}.pdf`;
-        await uploadTexto(XML_BUCKET, xmlPath, xml, "application/xml");
         const danfeBase64 = await gerarDanfeBase64(payload, numero, chaveAcesso);
-        await uploadBase64(DANFE_BUCKET, danfePath, danfeBase64, "application/pdf");
         return res.json({
             autorizado: true,
             status: "AUTHORIZED",
@@ -316,8 +248,8 @@ async function emitirNfceHandler(orderId, payload, res) {
             serie,
             chave_acesso: chaveAcesso,
             protocolo: payload.ambiente === 2 ? "HOMOLOGACAO-LOCAL" : "PRODUCAO-LOCAL",
-            xml_path: xmlPath,
-            danfe_path: danfePath
+            xml_base64: Buffer.from(xml, "utf-8").toString("base64"),
+            danfe_base64: danfeBase64
         });
     }
     catch (err) {
