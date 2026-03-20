@@ -17,9 +17,6 @@ app.use(express.json({ limit: "30mb" }));
 
 const PORT = Number(process.env.PORT || 3000);
 
-// =========================
-// CONFIG SEFAZ GO
-// =========================
 const SEFAZ_GO = {
   autorizacaoProducao: "https://nfe.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
   autorizacaoHomologacao: "https://homolog.sefaz.go.gov.br/nfe/services/NFeAutorizacao4",
@@ -36,8 +33,10 @@ function safeNumber(value: unknown, fallback = 0) {
 
 async function obterCertificadoBuffer(payload: any) {
   if (payload?.certificado?.pfx_base64) {
+    console.log("Usando certificado via pfx_base64");
     return Buffer.from(payload.certificado.pfx_base64, "base64");
   }
+
   throw new Error("Certificado não informado. Envie certificado.pfx_base64");
 }
 
@@ -283,12 +282,20 @@ async function enviarParaSefazGo(xmlAssinado: string, ambiente: number) {
 
   const soapBody = montarSoapAutorizacao(xmlAssinado);
 
+  console.log("========== XML ENVIADO SEFAZ ==========");
+  console.log(xmlAssinado);
+  console.log("========== FIM XML ENVIADO ==========");
+
   const response = await axios.post(url, soapBody, {
     headers: {
       "Content-Type": "application/soap+xml; charset=utf-8"
     },
     timeout: 30000
   });
+
+  console.log("========== RESPOSTA SEFAZ BRUTA ==========");
+  console.log(response.data);
+  console.log("========== FIM RESPOSTA SEFAZ ==========");
 
   return response.data;
 }
@@ -312,13 +319,19 @@ function extrairAutorizacao(xmlRetorno: string) {
   const nProt = nProtMatch?.[1] || "";
   const chNFe = chNFeMatch?.[1] || "";
 
-  return {
+  const resumo = {
     cStat,
     xMotivo,
     nProt,
     chNFe,
     rawXml: xmlRetorno
   };
+
+  console.log("========== RESUMO SEFAZ ==========");
+  console.log(resumo);
+  console.log("========== FIM RESUMO ==========");
+
+  return resumo;
 }
 
 async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: string) {
@@ -409,7 +422,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         status: "REJECTED",
         motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
         cStat: retorno.cStat,
-        resposta_xml: xmlRetorno
+        resposta_xml: xmlRetorno,
+        sefaz_debug: retorno
       });
     }
 
@@ -426,7 +440,13 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       chave_acesso: chaveAcesso,
       protocolo: retorno.nProt,
       xml_autorizado_base64: Buffer.from(xmlRetorno, "utf-8").toString("base64"),
-      danfe_base64: danfeBase64
+      danfe_base64: danfeBase64,
+      sefaz_debug: {
+        cStat: retorno.cStat,
+        xMotivo: retorno.xMotivo,
+        nProt: retorno.nProt,
+        chNFe: retorno.chNFe
+      }
     });
   } catch (err: any) {
     console.error("Erro no backend fiscal:", err);
