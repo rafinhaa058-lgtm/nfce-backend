@@ -94,8 +94,9 @@ function gerarXmlBase(payload) {
     const cnpj = onlyNumbers(payload.emitente?.cnpj);
     const cMun = String(payload.emitente?.codigo_municipio || "5212501");
     const chave = gerarChaveFake(payload, cNF);
-    const root = (0, xmlbuilder2_1.create)()
-        .ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
+    const root = (0, xmlbuilder2_1.create)().ele("NFe", {
+        xmlns: "http://www.portalfiscal.inf.br/nfe",
+    });
     const infNFe = root.ele("infNFe", {
         versao: "4.00",
         Id: `NFe${chave}`,
@@ -234,14 +235,20 @@ function assinarXmlNfce(xml, certPem, keyPem) {
 }
 function extrairApenasNFe(xmlAssinado) {
     const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
-    const match = xmlSemDeclaracao.match(/<NFe[\s\S]*<\/NFe>/i);
-    if (!match) {
-        throw new Error("Não foi possível extrair o bloco <NFe> assinado");
+    const inicio = xmlSemDeclaracao.indexOf("<NFe");
+    const fim = xmlSemDeclaracao.lastIndexOf("</NFe>");
+    if (inicio === -1 || fim === -1) {
+        console.error("XML ASSINADO COMPLETO:");
+        console.log(xmlAssinado);
+        throw new Error("Não encontrou <NFe> no XML assinado");
     }
-    return match[0];
+    return xmlSemDeclaracao.substring(inicio, fim + 6);
 }
 function montarSoapAutorizacao(xmlAssinado) {
     const nfeXml = extrairApenasNFe(xmlAssinado);
+    console.log("========== NFE EXTRAIDO ==========");
+    console.log(nfeXml);
+    console.log("========== FIM NFE EXTRAIDO ==========");
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
