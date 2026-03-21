@@ -45,25 +45,25 @@ const BAIRRO_PADRAO = "CENTRO";
 const CODIGO_MUNICIPIO_PADRAO = "5212501";
 const CNAE_PADRAO = "5611203";
 
-function onlyNumbers(value: unknown) {
+function onlyNumbers(value: unknown): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-function safeNumber(value: unknown, fallback = 0) {
+function safeNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function pad(value: string | number, size: number) {
+function pad(value: string | number, size: number): string {
   return String(value).padStart(size, "0");
 }
 
-function normalizarCep(value: unknown) {
+function normalizarCep(value: unknown): string {
   const cep = onlyNumbers(value);
   return cep.length === 8 ? cep : CEP_PADRAO;
 }
 
-function calcularDVChave(chave43: string) {
+function calcularDVChave(chave43: string): string {
   let peso = 2;
   let soma = 0;
 
@@ -76,7 +76,7 @@ function calcularDVChave(chave43: string) {
   return mod === 0 || mod === 1 ? "0" : String(11 - mod);
 }
 
-async function obterCertificadoBuffer(payload: any) {
+async function obterCertificadoBuffer(payload: any): Promise<Buffer> {
   if (payload?.certificado?.pfx_base64) {
     console.log("Usando certificado via pfx_base64");
     return Buffer.from(String(payload.certificado.pfx_base64), "base64");
@@ -133,7 +133,7 @@ function validarCertificadoP12(buffer: Buffer, senha: string) {
   };
 }
 
-function gerarChave(payload: any, cNF: string) {
+function gerarChave(payload: any, cNF: string): string {
   const cUF = "52";
   const aamm = new Date().toISOString().slice(2, 7).replace("-", "");
   const cnpj = onlyNumbers(payload.emitente?.cnpj);
@@ -356,7 +356,7 @@ function gerarXmlBase(payload: any) {
   };
 }
 
-function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
+function assinarXmlNfce(xml: string, certPem: string, keyPem: string): string {
   const xmlLimpo = xml.replace(/<\?xml[^>]*\?>/i, "").trim();
 
   const sig = new SignedXml();
@@ -384,7 +384,7 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string) {
   return sig.getSignedXml();
 }
 
-function extrairApenasNFe(xmlAssinado: string) {
+function extrairApenasNFe(xmlAssinado: string): string {
   const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
   const inicio = xmlSemDeclaracao.indexOf("<NFe");
   const fim = xmlSemDeclaracao.lastIndexOf("</NFe>");
@@ -398,7 +398,7 @@ function extrairApenasNFe(xmlAssinado: string) {
   return xmlSemDeclaracao.substring(inicio, fim + 6);
 }
 
-function montarSoapAutorizacao(xmlAssinado: string) {
+function montarSoapAutorizacao(xmlAssinado: string): string {
   const nfeXml = extrairApenasNFe(xmlAssinado);
 
   console.log("========== NFE EXTRAIDO ==========");
@@ -424,7 +424,7 @@ async function enviarParaSefazGo(
   ambiente: number,
   certBuffer: Buffer,
   senha: string
-) {
+): Promise<string> {
   const url =
     ambiente === 1
       ? SEFAZ_GO.autorizacaoProducao
@@ -507,7 +507,7 @@ function extrairAutorizacao(xmlRetorno: string) {
   return resumo;
 }
 
-async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: string) {
+async function gerarDanfeBase64(payload: any, numero: number, chaveAcesso: string): Promise<string> {
   const doc = new PDFDocument({ margin: 20, size: "A4" });
   const buffers: Buffer[] = [];
 
@@ -620,6 +620,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     if (retorno.cStat !== "100") {
       return res.status(400).json({
-        autorizado: false,
-        status: "REJECTED",
-motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
+        aut

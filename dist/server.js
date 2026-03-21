@@ -506,9 +506,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
         const retorno = extrairAutorizacao(xmlRetorno);
         if (retorno.cStat !== "100") {
             return res.status(400).json({
-                autorizado: false,
-                status: "REJECTED",
-                motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
+                aut
             });
         }
     }
