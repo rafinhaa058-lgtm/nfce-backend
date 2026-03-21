@@ -16,6 +16,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "30mb" }));
 
+app.use((err: any, _req: any, res: any, next: any) => {
+  if (err instanceof SyntaxError && "body" in err) {
+    console.error("❌ JSON inválido recebido:", err.message);
+    return res.status(400).json({
+      autorizado: false,
+      status: "ERROR",
+      motivo: "JSON inválido",
+      detalhe: err.message,
+    });
+  }
+  next(err);
+});
+
 const PORT = Number(process.env.PORT || 3000);
 
 const SEFAZ_GO = {
@@ -65,7 +78,7 @@ function calcularDVChave(chave43: string) {
 async function obterCertificadoBuffer(payload: any) {
   if (payload?.certificado?.pfx_base64) {
     console.log("Usando certificado via pfx_base64");
-    return Buffer.from(payload.certificado.pfx_base64, "base64");
+    return Buffer.from(String(payload.certificado.pfx_base64), "base64");
   }
 
   throw new Error("Certificado não informado. Envie certificado.pfx_base64");
@@ -156,6 +169,7 @@ function gerarXmlBase(payload: any) {
   const cidade = payload.emitente?.cidade || CIDADE_PADRAO;
   const uf = payload.emitente?.uf || UF_PADRAO;
   const razaoSocial = payload.emitente?.razao_social || payload.emitente?.nome_fantasia || "";
+  const naturezaOperacao = payload.natureza_operacao || "VENDA";
 
   console.log("CEP RECEBIDO:", payload.emitente?.cep);
   console.log("CEP NORMALIZADO:", cep);
@@ -180,7 +194,7 @@ function gerarXmlBase(payload: any) {
   const ide = infNFe.ele("ide");
   ide.ele("cUF").txt(cUF);
   ide.ele("cNF").txt(cNF);
-  ide.ele("natOp").txt(payload.natureza_operacao || "VENDA");
+  ide.ele("natOp").txt(naturezaOperacao);
   ide.ele("mod").txt(mod);
   ide.ele("serie").txt(serie);
   ide.ele("nNF").txt(numero);
@@ -239,16 +253,17 @@ function gerarXmlBase(payload: any) {
   for (const item of payload.itens || []) {
     const quantidade = safeNumber(item.quantidade, 1);
     const valorUnitario = safeNumber(item.valor_unitario, 0);
-    const valorTotal = item.valor_total != null
-      ? safeNumber(item.valor_total, valorUnitario * quantidade)
-      : valorUnitario * quantidade;
+    const valorTotal =
+      item.valor_total != null
+        ? safeNumber(item.valor_total, valorUnitario * quantidade)
+        : valorUnitario * quantidade;
 
     totalProdutos += valorTotal;
 
-    const det = infNFe.ele("det", { nItem: String(item.numero_item) });
+    const det = infNFe.ele("det", { nItem: String(item.numero_item || 1) });
     const prod = det.ele("prod");
 
-    prod.ele("cProd").txt(String(item.codigo_produto || item.numero_item));
+    prod.ele("cProd").txt(String(item.codigo_produto || item.numero_item || "1"));
     prod.ele("cEAN").txt("SEM GTIN");
     prod.ele("xProd").txt(item.descricao || "ITEM");
     prod.ele("NCM").txt(item.ncm || "21069090");
@@ -268,16 +283,16 @@ function gerarXmlBase(payload: any) {
 
     const icms = imposto.ele("ICMS");
     const icmssn102 = icms.ele("ICMSSN102");
-    icmssn102.ele("orig").txt("0");
-    icmssn102.ele("CSOSN").txt("102");
+    icmssn102.ele("orig").txt(String(item?.impostos?.icms?.origem ?? "0"));
+    icmssn102.ele("CSOSN").txt(String(item?.impostos?.icms?.csosn ?? "102"));
 
     const pis = imposto.ele("PIS");
     const pisnt = pis.ele("PISNT");
-    pisnt.ele("CST").txt("07");
+    pisnt.ele("CST").txt(String(item?.impostos?.pis?.cst ?? "07"));
 
     const cofins = imposto.ele("COFINS");
     const cofinsnt = cofins.ele("COFINSNT");
-    cofinsnt.ele("CST").txt("07");
+    cofinsnt.ele("CST").txt(String(item?.impostos?.cofins?.cst ?? "07"));
   }
 
   const valorNF = safeNumber(payload.totais?.valor_total, totalProdutos);
@@ -309,15 +324,20 @@ function gerarXmlBase(payload: any) {
 
   const pag = infNFe.ele("pag");
   const detPag = pag.ele("detPag");
-  detPag.ele("tPag").txt(payload.pagamento?.forma_codigo || "01");
+  detPag.ele("tPag").txt(String(payload.pagamento?.forma_codigo || "01"));
   detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, valorNF).toFixed(2));
 
+  const troco = safeNumber(payload.pagamento?.troco, 0);
+  if (troco > 0) {
+    pag.ele("vTroco").txt(troco.toFixed(2));
+  }
+
   const infAdic = infNFe.ele("infAdic");
-  infAdic.ele("infCpl").txt(
+  const infCpl =
     tpAmb === "2"
       ? "EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
-      : (payload.informacoes_complementares || "")
-  );
+      : payload.informacoes_complementares || "";
+  infAdic.ele("infCpl").txt(infCpl);
 
   return {
     xml: root.end({ headless: true, prettyPrint: false }),
@@ -532,6 +552,7 @@ app.get("/health", (_req, res) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   try {
+    console.log("📦 ORDER ID:", req.params.orderId);
     console.log("📦 PAYLOAD RECEBIDO:");
     console.log(JSON.stringify(req.body, null, 2));
 
@@ -546,17 +567,33 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       });
     }
 
-    if (!payload?.emitente?.cnpj || !payload?.certificado?.senha) {
+    const camposFaltando: string[] = [];
+
+    if (!payload?.emitente?.cnpj) camposFaltando.push("emitente.cnpj");
+    if (!payload?.emitente?.razao_social && !payload?.emitente?.nome_fantasia) {
+      camposFaltando.push("emitente.razao_social");
+    }
+    if (!payload?.emitente?.inscricao_estadual) camposFaltando.push("emitente.inscricao_estadual");
+    if (!payload?.certificado?.senha) camposFaltando.push("certificado.senha");
+    if (!payload?.certificado?.pfx_base64) camposFaltando.push("certificado.pfx_base64");
+    if (!Array.isArray(payload?.itens) || payload.itens.length === 0) camposFaltando.push("itens");
+    if (payload?.totais?.valor_total == null) camposFaltando.push("totais.valor_total");
+    if (!payload?.pagamento?.forma_codigo) camposFaltando.push("pagamento.forma_codigo");
+    if (payload?.pagamento?.valor == null) camposFaltando.push("pagamento.valor");
+
+    if (camposFaltando.length > 0) {
+      console.log("❌ CAMPOS FALTANDO:", camposFaltando);
       return res.status(400).json({
         autorizado: false,
         status: "ERROR",
         motivo: "Payload fiscal incompleto",
+        campos_faltando: camposFaltando,
       });
     }
 
     const certBuffer = await obterCertificadoBuffer(payload);
-    const certInfo = extrairCertificadoEChave(certBuffer, payload.certificado.senha);
-    validarCertificadoP12(certBuffer, payload.certificado.senha);
+    const certInfo = extrairCertificadoEChave(certBuffer, String(payload.certificado.senha));
+    validarCertificadoP12(certBuffer, String(payload.certificado.senha));
 
     const { xml, chave } = gerarXmlBase(payload);
     const xmlAssinado = assinarXmlNfce(xml, certInfo.certPem, certInfo.keyPem);
@@ -565,7 +602,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       xmlAssinado,
       Number(payload.ambiente || 2),
       certBuffer,
-      payload.certificado.senha
+      String(payload.certificado.senha)
     );
 
     const retorno = extrairAutorizacao(xmlRetorno);
@@ -584,34 +621,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const numero = Number(payload.numero || 1);
     const serie = Number(payload.serie || 1);
     const chaveAcesso = retorno.chNFe || chave;
-    const danfeBase64 = await gerarDanfeBase64(payload, numero, chaveAcesso);
-
-    return res.json({
-      autorizado: true,
-      status: "AUTHORIZED",
-      numero,
-      serie,
-      chave_acesso: chaveAcesso,
-      protocolo: retorno.nProt,
-      xml_autorizado_base64: Buffer.from(xmlRetorno, "utf-8").toString("base64"),
-      danfe_base64: danfeBase64,
-      sefaz_debug: {
-        cStat: retorno.cStat,
-        xMotivo: retorno.xMotivo,
-        nProt: retorno.nProt,
-        chNFe: retorno.chNFe,
-      },
-    });
-  } catch (err: any) {
-    console.error("Erro no backend fiscal:", err);
-    return res.status(500).json({
-      autorizado: false,
-      status: "ERROR",
-      motivo: err.message || "Erro interno no backend fiscal",
-    });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Backend fiscal externo rodando em http://localhost:${PORT}`);
-});
+    const danfeBase64 = await gerarDanf
