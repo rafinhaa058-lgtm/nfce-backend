@@ -42,6 +42,7 @@ const LOGRADOURO_PADRAO = "RUA MONÇÃO";
 const NUMERO_PADRAO = "30";
 const BAIRRO_PADRAO = "CENTRO";
 const CODIGO_MUNICIPIO_PADRAO = "5212501";
+const CNAE_PADRAO = "5611203";
 function onlyNumbers(value) {
     return String(value ?? "").replace(/\D/g, "");
 }
@@ -144,6 +145,7 @@ function gerarXmlBase(payload) {
     const uf = payload.emitente?.uf || UF_PADRAO;
     const razaoSocial = payload.emitente?.razao_social || payload.emitente?.nome_fantasia || "";
     const naturezaOperacao = payload.natureza_operacao || "VENDA";
+    const cnae = onlyNumbers(payload.emitente?.cnae || CNAE_PADRAO);
     console.log("CEP RECEBIDO:", payload.emitente?.cep);
     console.log("CEP NORMALIZADO:", cep);
     console.log("LOGRADOURO FINAL:", logradouro);
@@ -171,6 +173,7 @@ function gerarXmlBase(payload) {
     ide.ele("serie").txt(serie);
     ide.ele("nNF").txt(numero);
     ide.ele("dhEmi").txt(dhEmi);
+    ide.ele("dhSaiEnt").txt(dhEmi);
     ide.ele("tpNF").txt("1");
     ide.ele("idDest").txt("1");
     ide.ele("cMunFG").txt(cMun);
@@ -181,6 +184,7 @@ function gerarXmlBase(payload) {
     ide.ele("finNFe").txt("1");
     ide.ele("indFinal").txt("1");
     ide.ele("indPres").txt("1");
+    ide.ele("indIntermed").txt("0");
     ide.ele("procEmi").txt("0");
     ide.ele("verProc").txt("1.0.0");
     const emit = infNFe.ele("emit");
@@ -206,6 +210,7 @@ function gerarXmlBase(payload) {
         enderEmit.ele("fone").txt(fone);
     }
     emit.ele("IE").txt(ie);
+    emit.ele("CNAE").txt(cnae);
     emit.ele("CRT").txt(payload.emitente?.regime_tributario === "simples_nacional" ? "1" : "3");
     if (payload.destinatario?.cpf) {
         const dest = infNFe.ele("dest");
@@ -245,6 +250,8 @@ function gerarXmlBase(payload) {
         const icmssn102 = icms.ele("ICMSSN102");
         icmssn102.ele("orig").txt(String(item?.impostos?.icms?.origem ?? "0"));
         icmssn102.ele("CSOSN").txt(String(item?.impostos?.icms?.csosn ?? "102"));
+        icmssn102.ele("pCredSN").txt("0.00");
+        icmssn102.ele("vCredICMSSN").txt("0.00");
         const pis = imposto.ele("PIS");
         const pisnt = pis.ele("PISNT");
         pisnt.ele("CST").txt(String(item?.impostos?.pis?.cst ?? "07"));
@@ -502,15 +509,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
                 autorizado: false,
                 status: "REJECTED",
                 motivo: retorno.xMotivo || `SEFAZ retornou cStat ${retorno.cStat}`,
-                cStat: retorno.cStat,
-                resposta_xml: xmlRetorno,
-                sefaz_debug: retorno,
             });
         }
-        const numero = Number(payload.numero || 1);
-        const serie = Number(payload.serie || 1);
-        const chaveAcesso = retorno.chNFe || chave;
-        const danfeBase64 = await gerarDanf;
     }
     finally { }
 });
