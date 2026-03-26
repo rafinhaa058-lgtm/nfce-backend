@@ -68,6 +68,25 @@ function normalizeText(value: unknown, fallback = ""): string {
   return text || fallback;
 }
 
+function formatarDataSefaz(data?: string | Date): string {
+  const d = data ? new Date(data) : new Date();
+
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+
+  const timezoneMinutes = -d.getTimezoneOffset();
+  const sign = timezoneMinutes >= 0 ? "+" : "-";
+  const absMinutes = Math.abs(timezoneMinutes);
+  const tzH = String(Math.floor(absMinutes / 60)).padStart(2, "0");
+  const tzM = String(absMinutes % 60).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}${sign}${tzH}:${tzM}`;
+}
+
 function calcularDVChave(chave43: string): string {
   let peso = 2;
   let soma = 0;
@@ -153,8 +172,7 @@ function gerarChave(payload: any, cNF: string, dhEmi: string): string {
 
 function gerarXmlBase(payload: any) {
   const tpAmb = String(payload.ambiente || 2);
-  const dhEmiDate = payload?.data_emissao ? new Date(payload.data_emissao) : new Date();
-  const dhEmi = dhEmiDate.toISOString();
+  const dhEmi = formatarDataSefaz(payload?.data_emissao);
   const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
   const mod = String(payload.modelo || 65);
   const serie = String(payload.serie || 1);
@@ -170,7 +188,10 @@ function gerarXmlBase(payload: any) {
   const logradouro = normalizeText(payload.emitente?.logradouro, LOGRADOURO_PADRAO);
   const numeroEndereco = normalizeText(payload.emitente?.numero, NUMERO_PADRAO);
   const bairro = normalizeText(payload.emitente?.bairro, BAIRRO_PADRAO);
-  const cidade = normalizeText(payload.emitente?.cidade, CIDADE_PADRAO).toUpperCase();
+  const cidade = normalizeText(payload.emitente?.cidade, CIDADE_PADRAO)
+    .replace(/\bGO\b/gi, "")
+    .trim()
+    .toUpperCase();
   const uf = normalizeText(payload.emitente?.uf, UF_PADRAO).toUpperCase();
   const razaoSocial = normalizeText(
     payload.emitente?.razao_social || payload.emitente?.nome_fantasia,
@@ -198,10 +219,7 @@ function gerarXmlBase(payload: any) {
         }, 0);
 
   const valorTotal = safeNumber(payload?.totais?.valor_total, valorProdutos);
-  const valorFrete =
-    payload?.totais?.valor_frete != null
-      ? safeNumber(payload.totais.valor_frete, 0)
-      : Math.max(0, Number((valorTotal - valorProdutos).toFixed(2)));
+  const valorFrete = 0;
 
   const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
     xmlns: "http://www.portalfiscal.inf.br/nfe",
@@ -409,6 +427,10 @@ function extrairApenasNFe(xmlAssinado: string): string {
 function montarSoapAutorizacao(xmlAssinado: string): string {
   const nfeXml = extrairApenasNFe(xmlAssinado);
 
+  if (!nfeXml.includes("<NFe")) {
+    throw new Error("XML inválido: <NFe> não encontrado dentro do XML assinado");
+  }
+
   console.log("========== NFE EXTRAIDO ==========");
   console.log(nfeXml);
   console.log("========== FIM NFE EXTRAIDO ==========");
@@ -420,7 +442,7 @@ function montarSoapAutorizacao(xmlAssinado: string): string {
       <enviNFe versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${nfeXml}
+        ${nfeXml.trim()}
       </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
