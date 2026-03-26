@@ -170,8 +170,8 @@ function gerarXmlBase(payload: any) {
   const logradouro = normalizeText(payload.emitente?.logradouro, LOGRADOURO_PADRAO);
   const numeroEndereco = normalizeText(payload.emitente?.numero, NUMERO_PADRAO);
   const bairro = normalizeText(payload.emitente?.bairro, BAIRRO_PADRAO);
-  const cidade = CIDADE_PADRAO;
-  const uf = UF_PADRAO;
+  const cidade = normalizeText(payload.emitente?.cidade, CIDADE_PADRAO).toUpperCase();
+  const uf = normalizeText(payload.emitente?.uf, UF_PADRAO).toUpperCase();
   const razaoSocial = normalizeText(
     payload.emitente?.razao_social || payload.emitente?.nome_fantasia,
     ""
@@ -182,23 +182,35 @@ function gerarXmlBase(payload: any) {
   if (!ie) throw new Error("emitente.inscricao_estadual é obrigatória");
   if (!razaoSocial) throw new Error("emitente.razao_social é obrigatória");
 
-  const valorProdutos = payload?.totais?.valor_produtos != null
-    ? safeNumber(payload.totais.valor_produtos, 0)
-    : (payload.itens || []).reduce((soma: number, item: any) => soma + safeNumber(item.valor_total, 0), 0);
+  const itens = Array.isArray(payload.itens) ? payload.itens : [];
+
+  const valorProdutos =
+    payload?.totais?.valor_produtos != null
+      ? safeNumber(payload.totais.valor_produtos, 0)
+      : itens.reduce((soma: number, item: any) => {
+          const quantidade = safeNumber(item.quantidade, 1);
+          const valorUnitario = safeNumber(item.valor_unitario, 0);
+          const valorTotal =
+            item.valor_total != null
+              ? safeNumber(item.valor_total, valorUnitario * quantidade)
+              : valorUnitario * quantidade;
+          return soma + valorTotal;
+        }, 0);
 
   const valorTotal = safeNumber(payload?.totais?.valor_total, valorProdutos);
-  const valorFrete = payload?.totais?.valor_frete != null
-    ? safeNumber(payload.totais.valor_frete, 0)
-    : Math.max(0, Number((valorTotal - valorProdutos).toFixed(2)));
+  const valorFrete =
+    payload?.totais?.valor_frete != null
+      ? safeNumber(payload.totais.valor_frete, 0)
+      : Math.max(0, Number((valorTotal - valorProdutos).toFixed(2)));
 
   const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
-  xmlns: "http://www.portalfiscal.inf.br/nfe",
-});
+    xmlns: "http://www.portalfiscal.inf.br/nfe",
+  });
 
-const infNFe = root.ele("infNFe", {
-  versao: "4.00",
-  Id: `NFe${chave}`,
-});
+  const infNFe = root.ele("infNFe", {
+    versao: "4.00",
+    Id: `NFe${chave}`,
+  });
 
   const ide = infNFe.ele("ide");
   ide.ele("cUF").txt("52");
@@ -262,7 +274,7 @@ const infNFe = root.ele("infNFe", {
     dest.ele("indIEDest").txt("9");
   }
 
-  for (const item of payload.itens || []) {
+  itens.forEach((item: any, index: number) => {
     const quantidade = safeNumber(item.quantidade, 1);
     const valorUnitario = safeNumber(item.valor_unitario, 0);
     const valorItem =
@@ -270,10 +282,10 @@ const infNFe = root.ele("infNFe", {
         ? safeNumber(item.valor_total, valorUnitario * quantidade)
         : valorUnitario * quantidade;
 
-    const det = infNFe.ele("det", { nItem: String(item.numero_item || 1) });
+    const det = infNFe.ele("det", { nItem: String(item.numero_item || index + 1) });
     const prod = det.ele("prod");
 
-    prod.ele("cProd").txt(String(item.codigo_produto || item.numero_item || "1"));
+    prod.ele("cProd").txt(String(item.codigo_produto || item.numero_item || index + 1));
     prod.ele("cEAN").txt("SEM GTIN");
     prod.ele("xProd").txt(normalizeText(item.descricao, "ITEM"));
     prod.ele("NCM").txt(normalizeText(item.ncm, "21069090"));
@@ -303,7 +315,7 @@ const infNFe = root.ele("infNFe", {
     const cofins = imposto.ele("COFINS");
     const cofinsnt = cofins.ele("COFINSNT");
     cofinsnt.ele("CST").txt(String(item?.impostos?.cofins?.cst ?? "07"));
-  }
+  });
 
   const total = infNFe.ele("total").ele("ICMSTot");
   total.ele("vBC").txt("0.00");
@@ -391,9 +403,7 @@ function extrairApenasNFe(xmlAssinado: string): string {
     throw new Error("Não encontrou <NFe> no XML assinado");
   }
 
-  return match[0]
-    .replace(/<NFe xmlns="http:\/\/www\.portalfiscal\.inf\.br\/nfe">/, "<NFe>")
-    .trim();
+  return match[0].trim();
 }
 
 function montarSoapAutorizacao(xmlAssinado: string): string {
