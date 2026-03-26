@@ -166,7 +166,7 @@ function gerarXmlBase(payload: any) {
   const ie = onlyNumbers(payload.emitente?.inscricao_estadual || "");
   const fone = onlyNumbers(payload.emitente?.fone || "");
   const logradouro = payload.emitente?.logradouro || LOGRADOURO_PADRAO;
-  const numeroEndereco = payload.emitente?.numero || NUMERO_PADRAO;
+  const numeroEndereco = String(payload.emitente?.numero || NUMERO_PADRAO);
   const bairro = payload.emitente?.bairro || BAIRRO_PADRAO;
   const cidade = payload.emitente?.cidade || CIDADE_PADRAO;
   const uf = payload.emitente?.uf || UF_PADRAO;
@@ -178,7 +178,7 @@ function gerarXmlBase(payload: any) {
   if (!ie) throw new Error("emitente.inscricao_estadual é obrigatória");
   if (!razaoSocial) throw new Error("emitente.razao_social é obrigatória");
 
-  const root = create().ele("NFe", {
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
     xmlns: "http://www.portalfiscal.inf.br/nfe",
   });
 
@@ -288,8 +288,6 @@ function gerarXmlBase(payload: any) {
     const icmssn102 = icms.ele("ICMSSN102");
     icmssn102.ele("orig").txt(String(item?.impostos?.icms?.origem ?? "0"));
     icmssn102.ele("CSOSN").txt(String(item?.impostos?.icms?.csosn ?? "102"));
-    icmssn102.ele("pCredSN").txt("0.00");
-    icmssn102.ele("vCredICMSSN").txt("0.00");
 
     const pis = imposto.ele("PIS");
     const pisnt = pis.ele("PISNT");
@@ -353,11 +351,12 @@ function gerarXmlBase(payload: any) {
 function assinarXmlNfce(xml: string, certPem: string, keyPem: string): string {
   const xmlLimpo = xml.replace(/<\?xml[^>]*\?>/i, "").trim();
 
-  const sig = new SignedXml();
-  sig.privateKey = keyPem;
-  sig.publicCert = certPem;
-  sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
-  sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+  const sig = new SignedXml({
+    privateKey: keyPem,
+    publicCert: certPem,
+    canonicalizationAlgorithm: "http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
+    signatureAlgorithm: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+  });
 
   sig.addReference({
     xpath: "//*[local-name(.)='infNFe']",
@@ -375,21 +374,20 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string): string {
     },
   });
 
-  return sig.getSignedXml();
+  return sig.getSignedXml().replace(/<\?xml[^>]*\?>/i, "").trim();
 }
 
 function extrairApenasNFe(xmlAssinado: string): string {
   const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
-  const inicio = xmlSemDeclaracao.indexOf("<NFe");
-  const fim = xmlSemDeclaracao.lastIndexOf("</NFe>");
 
-  if (inicio === -1 || fim === -1) {
+  const match = xmlSemDeclaracao.match(/<NFe[\s\S]*<\/NFe>/);
+  if (!match) {
     console.error("XML ASSINADO COMPLETO:");
     console.log(xmlAssinado);
     throw new Error("Não encontrou <NFe> no XML assinado");
   }
 
-  return xmlSemDeclaracao.substring(inicio, fim + 6);
+  return match[0].trim();
 }
 
 function montarSoapAutorizacao(xmlAssinado: string): string {
