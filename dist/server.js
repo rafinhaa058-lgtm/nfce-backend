@@ -336,8 +336,8 @@ function montarSoapAutorizacao(xmlAssinado) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe">
+      <enviNFe versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
         ${nfeXml}
