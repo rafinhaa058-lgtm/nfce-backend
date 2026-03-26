@@ -152,9 +152,8 @@ function gerarXmlBase(payload) {
         throw new Error("emitente.inscricao_estadual é obrigatória");
     if (!razaoSocial)
         throw new Error("emitente.razao_social é obrigatória");
-    const root = (0, xmlbuilder2_1.create)({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
-        xmlns: "http://www.portalfiscal.inf.br/nfe",
-    });
+    // Blindado: sem xmlns no NFe, pois o namespace já vai no enviNFe
+    const root = (0, xmlbuilder2_1.create)({ version: "1.0", encoding: "UTF-8" }).ele("NFe");
     const infNFe = root.ele("infNFe", {
         versao: "4.00",
         Id: `NFe${chave}`,
@@ -325,7 +324,10 @@ function extrairApenasNFe(xmlAssinado) {
         console.log(xmlAssinado);
         throw new Error("Não encontrou <NFe> no XML assinado");
     }
-    return match[0].trim();
+    // Blindado: remove xmlns duplicado do NFe, porque o enviNFe já carrega o namespace
+    return match[0]
+        .replace(/<NFe\b[^>]*xmlns="http:\/\/www\.portalfiscal\.inf\.br\/nfe"([^>]*)>/, "<NFe$1>")
+        .trim();
 }
 function montarSoapAutorizacao(xmlAssinado) {
     const nfeXml = extrairApenasNFe(xmlAssinado);

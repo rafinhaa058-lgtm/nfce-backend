@@ -178,9 +178,8 @@ function gerarXmlBase(payload: any) {
   if (!ie) throw new Error("emitente.inscricao_estadual é obrigatória");
   if (!razaoSocial) throw new Error("emitente.razao_social é obrigatória");
 
-  const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
-    xmlns: "http://www.portalfiscal.inf.br/nfe",
-  });
+  // Blindado: sem xmlns no NFe, pois o namespace já vai no enviNFe
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe");
 
   const infNFe = root.ele("infNFe", {
     versao: "4.00",
@@ -379,15 +378,18 @@ function assinarXmlNfce(xml: string, certPem: string, keyPem: string): string {
 
 function extrairApenasNFe(xmlAssinado: string): string {
   const xmlSemDeclaracao = xmlAssinado.replace(/<\?xml[^>]*\?>/i, "").trim();
-
   const match = xmlSemDeclaracao.match(/<NFe[\s\S]*<\/NFe>/);
+
   if (!match) {
     console.error("XML ASSINADO COMPLETO:");
     console.log(xmlAssinado);
     throw new Error("Não encontrou <NFe> no XML assinado");
   }
 
-  return match[0].trim();
+  // Blindado: remove xmlns duplicado do NFe, porque o enviNFe já carrega o namespace
+  return match[0]
+    .replace(/<NFe\b[^>]*xmlns="http:\/\/www\.portalfiscal\.inf\.br\/nfe"([^>]*)>/, "<NFe$1>")
+    .trim();
 }
 
 function montarSoapAutorizacao(xmlAssinado: string): string {
