@@ -191,12 +191,14 @@ function gerarXmlBase(payload: any) {
     ? safeNumber(payload.totais.valor_frete, 0)
     : Math.max(0, Number((valorTotal - valorProdutos).toFixed(2)));
 
-  const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe");
-  const infNFe = root.ele("infNFe", {
-    xmlns: "http://www.portalfiscal.inf.br/nfe",
-    versao: "4.00",
-    Id: `NFe${chave}`,
-  });
+  const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
+  xmlns: "http://www.portalfiscal.inf.br/nfe",
+});
+
+const infNFe = root.ele("infNFe", {
+  versao: "4.00",
+  Id: `NFe${chave}`,
+});
 
   const ide = infNFe.ele("ide");
   ide.ele("cUF").txt("52");
