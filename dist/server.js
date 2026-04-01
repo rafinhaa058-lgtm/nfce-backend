@@ -49,6 +49,10 @@ function safeNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
 }
+function normalizeText(value, fallback = "") {
+    const text = String(value ?? fallback).trim();
+    return text || fallback;
+}
 function pad(value, size) {
     return String(value).padStart(size, "0");
 }
@@ -56,24 +60,16 @@ function normalizarCep(value) {
     const cep = onlyNumbers(value);
     return cep.length === 8 ? cep : CEP_PADRAO;
 }
-function normalizeText(value, fallback = "") {
-    const text = String(value ?? fallback).trim();
-    return text || fallback;
-}
 function formatarDataSefaz(data) {
-    const d = data ? new Date(data) : new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    const timezoneMinutes = -d.getTimezoneOffset();
-    const sign = timezoneMinutes >= 0 ? "+" : "-";
-    const absMinutes = Math.abs(timezoneMinutes);
-    const tzH = String(Math.floor(absMinutes / 60)).padStart(2, "0");
-    const tzM = String(absMinutes % 60).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}${sign}${tzH}:${tzM}`;
+    const base = data ? new Date(data) : new Date();
+    const local = new Date(base.getTime() - 3 * 60 * 60 * 1000);
+    const yyyy = local.getUTCFullYear();
+    const mm = String(local.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(local.getUTCDate()).padStart(2, "0");
+    const hh = String(local.getUTCHours()).padStart(2, "0");
+    const mi = String(local.getUTCMinutes()).padStart(2, "0");
+    const ss = String(local.getUTCSeconds()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}-03:00`;
 }
 function calcularDVChave(chave43) {
     let peso = 2;
@@ -175,13 +171,13 @@ function gerarXmlBase(payload) {
         : itens.reduce((soma, item) => {
             const quantidade = safeNumber(item.quantidade, 1);
             const valorUnitario = safeNumber(item.valor_unitario, 0);
-            const valorTotal = item.valor_total != null
+            const valorItem = item.valor_total != null
                 ? safeNumber(item.valor_total, valorUnitario * quantidade)
                 : valorUnitario * quantidade;
-            return soma + valorTotal;
+            return soma + valorItem;
         }, 0);
-    const valorTotal = safeNumber(payload?.totais?.valor_total, valorProdutos);
     const valorFrete = 0;
+    const valorTotal = valorProdutos;
     const root = (0, xmlbuilder2_1.create)({ version: "1.0", encoding: "UTF-8" }).ele("NFe", {
         xmlns: "http://www.portalfiscal.inf.br/nfe",
     });
@@ -303,7 +299,7 @@ function gerarXmlBase(payload) {
     const pag = infNFe.ele("pag");
     const detPag = pag.ele("detPag");
     detPag.ele("tPag").txt(String(payload.pagamento?.forma_codigo || "01"));
-    detPag.ele("vPag").txt(safeNumber(payload.pagamento?.valor, valorTotal).toFixed(2));
+    detPag.ele("vPag").txt(valorTotal.toFixed(2));
     const troco = safeNumber(payload.pagamento?.troco, 0);
     if (troco > 0) {
         pag.ele("vTroco").txt(troco.toFixed(2));
@@ -361,11 +357,11 @@ function montarSoapAutorizacao(xmlAssinado) {
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe">
-      <enviNFe versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">
+    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
         <idLote>1</idLote>
         <indSinc>1</indSinc>
-        ${nfeXml.trim()}
+        ${nfeXml}
       </enviNFe>
     </nfeDadosMsg>
   </soap12:Body>
