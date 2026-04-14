@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - A BALA DE PRATA (14/04/2026)
+// VERSÃO DA VITÓRIA - FIX ZEROS À ESQUERDA - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,12 +22,13 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
+// --- SANITIZADORES BLINDADOS CONTRA O SCHEMA ---
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const norm = (v: any, max: number = 60) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase().substring(0, max);
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- EMISSÃO LUZIÂNIA: MODO BLINDADO (FIX URI & CDATA) ---");
+  console.log("--- EMISSÃO LUZIÂNIA: O ATAQUE FINAL AO ERRO 225 ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -40,14 +41,18 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
-    // 2. CHAVE DE ACESSO
-    const cnpj = clean(p.emitente.cnpj).padStart(14, "0");
+    // 2. CHAVE DE ACESSO E REGRAS DE ZERO
+    const cnpj = clean(p.emitente.cnpj).padStart(14, "0").slice(-14);
     const dh = new Date(new Date().getTime() - (3 * 60 * 60 * 1000)).toISOString().replace(/\.\d+Z$/, "-03:00");
     const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
-    const serie = String(p.serie || 1).padStart(3, "0");
-    const nNF = String(p.numero || 1).padStart(9, "0");
-    const base43 = `52${dh.slice(2, 4)}${dh.slice(5, 7)}${cnpj}65${serie}${nNF}1${cNF}`;
     
+    // AQUI ESTÁ A CORREÇÃO DO ERRO 225: Separando o formato da chave do formato XML
+    const serieStr = clean(String(p.serie || 1)) || "1";
+    const numeroStr = clean(String(p.numero || 1)) || "1";
+    const seriePad = serieStr.padStart(3, "0");
+    const nNFPad = numeroStr.padStart(9, "0");
+
+    const base43 = `52${dh.slice(2, 4)}${dh.slice(5, 7)}${cnpj}65${seriePad}${nNFPad}1${cNF}`;
     let soma = 0, peso = 2;
     for (let i = base43.length - 1; i >= 0; i--) { soma += Number(base43[i]) * peso; peso = peso === 9 ? 2 : peso + 1; }
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
@@ -59,7 +64,9 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const ide = infNFe.ele("ide");
     ide.ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up()
-       .ele("serie").txt(serie).up().ele("nNF").txt(nNF).up().ele("dhEmi").txt(dh).up()
+       .ele("serie").txt(serieStr).up() // SEM zero à esquerda!
+       .ele("nNF").txt(numeroStr).up() // SEM zero à esquerda!
+       .ele("dhEmi").txt(dh).up()
        .ele("tpNF").txt("1").up().ele("idDest").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up()
        .ele("tpEmis").txt("1").up().ele("cDV").txt(dv).up().ele("tpAmb").txt(String(tpAmb)).up()
        .ele("finNFe").txt("1").up().ele("indFinal").txt("1").up().ele("indPres").txt("1").up()
@@ -73,15 +80,16 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro)).up().ele("nro").txt(norm(p.emitente.numero || "SN")).up();
     if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento)).up();
     
-    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(0, 8);
+    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
     enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO")).up().ele("cMun").txt("5212501").up()
              .ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
              .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
-    if (clean(p.destinatario?.cpf)) {
+    const cpf = clean(p.destinatario?.cpf);
+    if (cpf.length === 11) { // Só insere se for 100% válido
       const dest = infNFe.ele("dest");
-      dest.ele("CPF").txt(clean(p.destinatario.cpf)).up();
+      dest.ele("CPF").txt(cpf).up();
       if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome)).up();
       dest.ele("indIEDest").txt("9");
     }
@@ -89,11 +97,16 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     p.itens.forEach((it: any, i: number) => {
       const q = safeNo(it.quantidade || 1);
       const v = safeNo(it.valor_unitario);
+      const ncm = clean(it.ncm);
+      const cfop = clean(it.cfop);
+
       const det = infNFe.ele("det", { nItem: String(i + 1) });
       const prod = det.ele("prod");
-      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1)).up().ele("cEAN").txt("SEM GTIN").up()
-          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up().ele("NCM").txt(clean(it.ncm) || "21069090").up()
-          .ele("CFOP").txt(clean(it.cfop) || "5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
+      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1, 60)).up().ele("cEAN").txt("SEM GTIN").up()
+          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up()
+          .ele("NCM").txt(ncm.length === 8 ? ncm : "21069090").up()
+          .ele("CFOP").txt(cfop.length === 4 ? cfop : "5102").up()
+          .ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
           .ele("vUnCom").txt(v.toFixed(2)).up().ele("vProd").txt((q * v).toFixed(2)).up()
           .ele("cEANTrib").txt("SEM GTIN").up().ele("uTrib").txt("UN").up().ele("qTrib").txt(q.toFixed(4)).up()
           .ele("vUnTrib").txt(v.toFixed(2)).up().ele("indTot").txt("1");
@@ -115,9 +128,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     infNFe.ele("transp").ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
     pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
-    pag.ele("vTroco").txt("0.00"); // Trava de segurança para schema de pagamento
 
-    // 4. INJEÇÃO DO QR CODE ANTES DE ASSINAR (Sem CDATA)
+    // 4. INJEÇÃO DO QR CODE (Com CDATA, exatidão do manual SEFAZ)
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
     const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
@@ -126,18 +138,16 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const qrCode = `${urlC}?p=${chave}|2|${tpAmb}|${cscId}|${hash}`;
 
     const supl = root.ele("infNFeSupl");
-    supl.ele("qrCode").txt(qrCode).up().ele("urlChave").txt(urlC);
+    supl.ele("qrCode").dat(qrCode).up().ele("urlChave").txt(urlC); // O .dat envelopa com CDATA!
 
     const xmlRaw = root.end({ headless: true });
 
-    // 5. ASSINATURA DIGITAL (O Vilão do erro 225 corrigido)
+    // 5. ASSINATURA DIGITAL
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.publicCert = certPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
-    
-    // AQUI ESTÁ A CORREÇÃO PRINCIPAL: O campo 'uri' é obrigatório no schema da SEFAZ!
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
@@ -145,17 +155,12 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       uri: `#NFe${chave}` 
     });
 
-    // Injeta a assinatura garantindo que fique no final da NFe
-    sig.computeSignature(xmlRaw, {
-      location: { reference: "//*[local-name(.)='NFe']", action: "append" }
-    });
-    
+    sig.computeSignature(xmlRaw, { location: { reference: "//*[local-name(.)='NFe']", action: "append" } });
     let xmlFinal = sig.getSignedXml();
-    // Garante que o namespace principal não suma (Outro causador do 225)
-    xmlFinal = xmlFinal.replace(/<NFe>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
+    xmlFinal = xmlFinal.replace(/<NFe>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">'); // Garante namespace
 
-    // 6. ENVIO SEFAZ
-    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+    // 6. ENVELOPE E ENVIO
+    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
       httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
@@ -163,21 +168,28 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       validateStatus: () => true
     });
 
-    console.log("=== RESPOSTA BRUTA DA SEFAZ ===");
-    console.log(resSefaz.data); // Isso vai nos dizer TUDO caso dê erro
-    console.log("===============================");
-
     const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
     const ret = result["soap:Envelope"]?.["soap:Body"]?.nfeResultMsg?.retEnviNFe || result["env:Envelope"]?.["env:Body"]?.nfeResultMsg?.retEnviNFe;
     const cStat = String(ret?.protNFe?.infProt?.cStat || ret?.cStat || "0");
     
-    console.log("CSTAT FINAL SEFAZ-GO:", cStat);
-    res.json({ autorizado: cStat === "100", cStat: cStat, motivo: ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo || "Erro", chave });
+    console.log("=== RESPOSTA SEFAZ-GO ===");
+    console.log("CSTAT:", cStat, "| Motivo:", ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo);
+
+    // Formato exato que o Lovable precisa para não dar erro
+    res.json({ 
+      autorizado: cStat === "100", 
+      status: cStat === "100" ? "AUTHORIZED" : "REJECTED", 
+      motivo: ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo || "Erro desconhecido", 
+      chave_acesso: chave,
+      protocolo: ret?.protNFe?.infProt?.nProt || "",
+      cStat: cStat,
+      sefaz_debug: ret 
+    });
 
   } catch (err: any) {
-    console.error("ERRO GRAVE:", err.message);
-    res.status(500).json({ autorizado: false, motivo: err.message });
+    console.error("ERRO NO SERVIDOR:", err.message);
+    res.status(500).json({ autorizado: false, status: "ERROR", motivo: err.message });
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Versão Final"));
