@@ -1,4 +1,4 @@
-// VERSÃO COM DEBUG TOTAL - 14/04/2026 16:45
+// VERSÃO FINAL CORRIGIDA - 14/04/2026 17:00
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -24,14 +24,9 @@ const SEFAZ_GO = {
 };
 
 // --- AUXILIARES ---
-function onlyNumbers(value: any): string { return String(value ?? "").replace(/\D/g, ""); }
-function safeNumber(value: any, fallback = 0): number { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
-function normalizeText(value: any, fallback = ""): string {
-  let text = String(value ?? fallback).trim();
-  text = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  return text.replace(/[<&"'>]/g, "").toUpperCase() || fallback;
-}
-function pad(value: any, size: number): string { return String(value).padStart(size, "0"); }
+const onlyNumbers = (v: any) => String(v ?? "").replace(/\D/g, "");
+const safeNumber = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const normalize = (v: any) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<&"'>]/g, "").toUpperCase();
 
 function formatarDataSefaz(data?: any): string {
   const local = data ? new Date(data) : new Date();
@@ -39,98 +34,94 @@ function formatarDataSefaz(data?: any): string {
   return d.toISOString().replace(/\.\d+Z$/, "-03:00");
 }
 
-function calcularDVChave(chave43: string): string {
-  let peso = 2; let soma = 0;
-  for (let i = chave43.length - 1; i >= 0; i--) {
-    soma += Number(chave43[i]) * peso;
-    peso = peso === 9 ? 2 : peso + 1;
-  }
-  const mod = soma % 11;
-  return mod === 0 || mod === 1 ? "0" : String(11 - mod);
-}
-
-function gerarQrCodeNfce(chave: string, ambiente: number, cscId: string, csc: string): string {
-  const urlBase = ambiente === 1 ? "https://nfe.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe" : "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe";
-  const cIdToken = pad(onlyNumbers(cscId), 6);
-  const concat = `${chave}|2|${ambiente}|${cIdToken}${csc}`;
-  const hash = crypto.createHash("sha1").update(concat).digest("hex").toUpperCase();
-  return `${urlBase}?p=${chave}|2|${ambiente}|${cIdToken}|${hash}`;
+function calcularDV(c: string): string {
+  let p = 2, s = 0;
+  for (let i = c.length - 1; i >= 0; i--) { s += Number(c[i]) * p; p = p === 9 ? 2 : p + 1; }
+  const m = s % 11; return (m === 0 || m === 1) ? "0" : String(11 - m);
 }
 
 // --- EMISSÃO ---
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- NOVA TENTATIVA DE EMISSÃO ---");
+  console.log("--- INICIANDO EMISSÃO NFC-E ---");
   try {
-    const payload = req.body;
-    const tpAmb = Number(payload.ambiente || 2);
-    console.log("Ambiente:", tpAmb === 1 ? "PRODUÇÃO" : "HOMOLOGAÇÃO");
+    const p = req.body;
+    const tpAmb = Number(p.ambiente || 2);
 
-    if (!payload.certificado?.pfx_base64) throw new Error("Certificado PFX não enviado.");
-
-    const certBuffer = Buffer.from(payload.certificado.pfx_base64, "base64");
-    const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), String(payload.certificado.senha));
+    // 1. Certificado
+    const certBuffer = Buffer.from(p.certificado.pfx_base64, "base64");
+    const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), String(p.certificado.senha));
     const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]![0];
     const keyBag = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]![0];
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
-    const cnpj = onlyNumbers(payload.emitente.cnpj);
-    const dhEmi = formatarDataSefaz(payload.data_emissao);
-    const cNF = pad(Math.floor(Math.random() * 99999999), 8);
-    const base43 = `52${dhEmi.slice(2, 4)}${dhEmi.slice(5, 7)}${cnpj.padStart(14, "0")}65${pad(payload.serie || 1, 3)}${pad(payload.numero || 1, 9)}1${cNF}`;
-    const chave = `${base43}${calcularDVChave(base43)}`;
-    console.log("Chave Gerada:", chave);
+    // 2. Chave e XML
+    const cnpj = onlyNumbers(p.emitente.cnpj);
+    const dh = formatarDataSefaz(p.data_emissao);
+    const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
+    const base43 = `52${dh.slice(2, 4)}${dh.slice(5, 7)}${cnpj.padStart(14, "0")}65${String(p.serie || 1).padStart(3, "0")}${String(p.numero || 1).padStart(9, "0")}1${cNF}`;
+    const chave = `${base43}${calcularDV(base43)}`;
 
-    const xmlObj = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
-    const infNFe = xmlObj.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
+    const xml = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" })
+      .ele("infNFe", { versao: "4.00", Id: `NFe${chave}` })
+        .ele("ide")
+          .ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up()
+          .ele("serie").txt(String(p.serie || 1)).up().ele("nNF").txt(String(p.numero || 1)).up().ele("dhEmi").txt(dh).up()
+          .ele("tpNF").txt("1").up().ele("idDest").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up()
+          .ele("tpEmis").txt("1").up().ele("cDV").txt(chave.slice(-1)).up().ele("tpAmb").txt(String(tpAmb)).up()
+          .ele("finNFe").txt("1").up().ele("indFinal").txt("1").up().ele("indPres").txt("1").up().ele("procEmi").txt("0").up()
+          .ele("verProc").txt("1.0.0").up().up()
+        .ele("emit")
+          .ele("CNPJ").txt(cnpj).up().ele("xNome").txt(normalize(p.emitente.razao_social)).up()
+          .ele("enderEmit")
+            .ele("xLgr").txt(normalize(p.emitente.logradouro)).up().ele("nro").txt(String(p.emitente.numero || "SN")).up()
+            .ele("xBairro").txt(normalize(p.emitente.bairro)).up().ele("cMun").txt("5212501").up().ele("xMun").txt("LUZIANIA").up()
+            .ele("UF").txt("GO").up().ele("CEP").txt(onlyNumbers(p.emitente.cep)).up().ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL").up().up()
+          .ele("IE").txt(onlyNumbers(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1").up().up();
 
-    const ide = infNFe.ele("ide");
-    ide.ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up().ele("serie").txt(String(payload.serie || 1)).up().ele("nNF").txt(String(payload.numero || 1)).up().ele("dhEmi").txt(dhEmi).up().ele("tpNF").txt("1").up().ele("idDest").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up().ele("tpEmis").txt("1").up().ele("cDV").txt(chave.slice(-1)).up().ele("tpAmb").txt(String(tpAmb)).up().ele("finNFe").txt("1").up().ele("indFinal").txt("1").up().ele("indPres").txt("1").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0").up();
-
-    infNFe.ele("emit").ele("CNPJ").txt(cnpj).up().ele("xNome").txt(normalizeText(payload.emitente.razao_social)).up().ele("enderEmit").ele("xLgr").txt(normalizeText(payload.emitente.logradouro)).up().ele("nro").txt(String(payload.emitente.numero || "SN")).up().ele("xBairro").txt(normalizeText(payload.emitente.bairro)).up().ele("cMun").txt("5212501").up().ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(onlyNumbers(payload.emitente.cep)).up().ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL").up().up().ele("IE").txt(onlyNumbers(payload.emitente.inscricao_estadual)).up().ele("CRT").txt("1").up();
-
-    payload.itens.forEach((item: any, i: number) => {
-      const det = infNFe.ele("det", { nItem: String(i + 1) });
-      const prod = det.ele("prod");
-      prod.ele("cProd").txt(String(item.codigo_produto || i + 1)).up().ele("cEAN").txt("SEM GTIN").up().ele("xProd").txt(normalizeText(item.descricao)).up().ele("NCM").txt(String(item.ncm || "21069090")).up().ele("CFOP").txt("5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(safeNumber(item.quantidade, 1).toFixed(4)).up().ele("vUnCom").txt(safeNumber(item.valor_unitario).toFixed(2)).up().ele("vProd").txt((safeNumber(item.quantidade, 1) * safeNumber(item.valor_unitario)).toFixed(2)).up().ele("cEANTrib").txt("SEM GTIN").up().ele("uTrib").txt("UN").up().ele("qTrib").txt(safeNumber(item.quantidade, 1).toFixed(4)).up().ele("vUnTrib").txt(safeNumber(item.valor_unitario).toFixed(2)).up().ele("indTot").txt("1").up();
-      det.ele("imposto").ele("ICMS").ele("ICMSSN102").ele("orig").txt("0").up().ele("CSOSN").txt("102").up().up().up().ele("PIS").ele("PISNT").ele("CST").txt("07").up().up().up().ele("COFINS").ele("COFINSNT").ele("CST").txt("07").up();
+    p.itens.forEach((it: any, i: number) => {
+      const det = xml.node().ele("det", { nItem: i + 1 });
+      det.ele("prod").ele("cProd").txt(String(it.codigo_produto || i + 1)).up().ele("cEAN").txt("SEM GTIN").up().ele("xProd").txt(normalize(it.descricao)).up().ele("NCM").txt("21069090").up().ele("CFOP").txt("5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(safeNumber(it.quantidade).toFixed(4)).up().ele("vUnCom").txt(safeNumber(it.valor_unitario).toFixed(2)).up().ele("vProd").txt((safeNumber(it.quantidade) * safeNumber(it.valor_unitario)).toFixed(2)).up().ele("cEANTrib").txt("SEM GTIN").up().ele("uTrib").txt("UN").up().ele("qTrib").txt(safeNumber(it.quantidade).toFixed(4)).up().ele("vUnTrib").txt(safeNumber(it.valor_unitario).toFixed(2)).up().ele("indTot").txt("1").up().up()
+         .ele("imposto").ele("ICMS").ele("ICMSSN102").ele("orig").txt("0").up().ele("CSOSN").txt("102").up().up().up().ele("PIS").ele("PISNT").ele("CST").txt("07").up().up().up().ele("COFINS").ele("COFINSNT").ele("CST").txt("07").up().up().up();
     });
 
-    const vTot = safeNumber(payload.totais.valor_total).toFixed(2);
-    infNFe.ele("total").ele("ICMSTot").ele("vBC").txt("0.00").up().ele("vICMS").txt("0.00").up().ele("vProd").txt(vTot).up().ele("vNF").txt(vTot).up().up().up().ele("transp").ele("modFrete").txt("9").up().up().ele("pag").ele("detPag").ele("tPag").txt(String(payload.pagamento.forma_codigo || "01")).up().ele("vPag").txt(vTot).up();
+    const total = safeNumber(p.totais.valor_total).toFixed(2);
+    xml.node().ele("total").ele("ICMSTot").ele("vBC").txt("0.00").up().ele("vICMS").txt("0.00").up().ele("vProd").txt(total).up().ele("vNF").txt(total).up().up().up().ele("transp").ele("modFrete").txt("9").up().up().ele("pag").ele("detPag").ele("tPag").txt(String(p.pagamento.forma_codigo || "01")).up().ele("vPag").txt(total).up();
 
+    // 3. Assinatura (CORREÇÃO DO ERRO DO LOG)
     const sig = new SignedXml();
-    sig.privateKey = keyPem; sig.publicCert = certPem;
+    sig.privateKey = keyPem;
+    sig.publicCert = certPem;
+    sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
+    sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
     sig.addReference({ xpath: "//*[local-name(.)='infNFe']", transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"], digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256" });
-    sig.computeSignature(xmlObj.end({ headless: true }), { location: { reference: "//*[local-name(.)='infNFe']", action: "after" } });
+    sig.computeSignature(xml.end({ headless: true }), { location: { reference: "//*[local-name(.)='infNFe']", action: "after" } });
 
-    const csc = payload.certificado.csc || payload.certificado.csc_token;
-    const cscId = payload.certificado.csc_id;
-    const qrCode = gerarQrCodeNfce(chave, tpAmb, String(cscId), String(csc));
+    // 4. QR Code
+    const csc = p.certificado.csc || p.certificado.csc_token;
+    const cscId = String(p.certificado.csc_id).padStart(6, "0");
+    const hash = crypto.createHash("sha1").update(`${chave}|2|${tpAmb}|${cscId}${csc}`).digest("hex").toUpperCase();
     const urlC = tpAmb === 1 ? "https://nfe.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe" : "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe";
-    
+    const qrCode = `${urlC}?p=${chave}|2|${tpAmb}|${cscId}|${hash}`;
+
     const xmlFinal = sig.getSignedXml().replace("</NFe>", `<infNFeSupl><qrCode><![CDATA[${qrCode}]]></qrCode><urlChave>${urlC}</urlChave></infNFeSupl></NFe>`);
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
-    console.log("XML de envio montado com sucesso.");
-
-    const response = await axios.post(tpAmb === 1 ? SEFAZ_GO.autorizacaoProducao : SEFAZ_GO.autorizacaoHomologacao, soap, {
-      httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(payload.certificado.senha), rejectUnauthorized: false }),
+    // 5. Envio
+    const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.autorizacaoProducao : SEFAZ_GO.autorizacaoHomologacao, soap, {
+      httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
       headers: { "Content-Type": "application/soap+xml; charset=utf-8" },
-      validateStatus: () => true // IMPORTANTE: Para ver o erro da SEFAZ
+      validateStatus: () => true
     });
 
-    console.log("RESPOSTA SEFAZ STATUS:", response.status);
-    console.log("RESPOSTA SEFAZ CORPO:", response.data);
-
-    const result = new XMLParser({ ignoreAttributes: false }).parse(response.data);
-    res.json({ autorizado: response.status === 200, sefaz: result });
+    console.log("RESPOSTA SEFAZ:", JSON.stringify(new XMLParser().parse(resSefaz.data)));
+    res.json({ autorizado: resSefaz.status === 200, sefaz: new XMLParser().parse(resSefaz.data) });
 
   } catch (err: any) {
-    console.error("ERRO NO PROCESSAMENTO:", err.message);
+    console.error("ERRO:", err.message);
     res.status(500).json({ autorizado: false, motivo: err.message });
   }
 });
 
-app.get("/", (req, res) => res.send("Servidor NFC-e Luziânia Ativo!"));
-app.listen(PORT, () => console.log(`🚀 Luziânia na porta ${PORT}`));
+app.get("/", (req, res) => res.send("NFC-e Luziânia Online!"));
+app.listen(PORT, () => console.log(`🚀 Porta ${PORT}`));
