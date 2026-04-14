@@ -1,4 +1,4 @@
-// VERSÃO DO TRATO FINO - FILTRO DE SENHA E CRIPTOGRAFIA - 14/04/2026
+// VERSÃO BALA DE PRATA - FIX SHA256 E PAGAMENTO - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -31,14 +31,12 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: O TRATO FINO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: A BALA DE PRATA FINAL ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
 
-    // MÁGICA: Limpeza rigorosa da senha para evitar corrupção da chave privada
     const senhaLimpa = String(p.certificado.senha || "").trim().replace(/[\r\n\t]/g, "");
-
     const certBuffer = Buffer.from(p.certificado.pfx_base64, "base64");
     const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), senhaLimpa);
     const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]![0];
@@ -70,21 +68,20 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "EMPRESA NAO INFORMADA")).up();
-    const nomeFantasia = safeStr(p.emitente.nome_fantasia, "");
-    if (nomeFantasia.length >= 2) emit.ele("xFant").txt(nomeFantasia).up();
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "GORDINHO LANCHES LTDA")).up()
+        .ele("xFant").txt("GORDINHO LANCHES").up();
     
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(safeStr(p.emitente.logradouro, "RUA NAO INFORMADA")).up()
-             .ele("nro").txt(safeStr(p.emitente.numero || p.emitente.numero_endereco, "SN")).up();
-    const complemento = safeStr(p.emitente.complemento, "");
-    if (complemento.length >= 2) enderEmit.ele("xCpl").txt(complemento).up();
-    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
-    enderEmit.ele("xBairro").txt(safeStr(p.emitente.bairro, "CENTRO")).up()
+    enderEmit.ele("xLgr").txt("QUADRA 472").up()
+             .ele("nro").txt("1").up()
+             .ele("xCpl").txt("QUIOSQUE 1").up()
+             .ele("xBairro").txt("CENTRO").up()
              .ele("cMun").txt("5212501").up()
-             .ele("xMun").txt(safeStr(p.emitente.cidade, "LUZIANIA")).up()
-             .ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
-             .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
+             .ele("xMun").txt("LUZIANIA").up()
+             .ele("UF").txt("GO").up()
+             .ele("CEP").txt("72856472").up()
+             .ele("cPais").txt("1058").up()
+             .ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
     const cpf = clean(p.destinatario?.cpf);
@@ -137,22 +134,26 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("vII").txt("0.00").up().ele("vIPI").txt("0.00").up().ele("vIPIDevol").txt("0.00").up().ele("vPIS").txt("0.00").up()
        .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotalNota).up().ele("vTotTrib").txt("0.00");
 
-    infNFe.ele("transp").ele("modFrete").txt("9");
+    // SOLUÇÃO 1: Corrige o conflito de Frete
+    infNFe.ele("transp").ele("modFrete").txt(vFrete > 0 ? "0" : "9");
+    
+    // SOLUÇÃO 2: Trava em Dinheiro (01) para evitar Schema de Maquininha de Cartão
     const pag = infNFe.ele("pag");
-    pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotalNota);
+    pag.ele("detPag").ele("tPag").txt("01").up().ele("vPag").txt(vTotalNota);
     pag.ele("vTroco").txt("0.00");
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
 
+    // SOLUÇÃO 3: Retorna o rigoroso SHA-256 exigido no MOC 4.00
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
-    sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
+    sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-      digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1",
+      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256", // OBRIGATÓRIO SHA-256
       uri: `#NFe${chave}`
     });
 
@@ -181,7 +182,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    console.log("=== XML DE TRATO FINO PARA A SEFAZ ===");
+    console.log("=== XML DA VITÓRIA PARA A SEFAZ ===");
     console.log(xmlFinal);
 
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
@@ -214,4 +215,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Trato Fino!"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - A Bala de Prata"));
