@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - EXTERMINADOR DE CARACTERES (COMPLETA) - 14/04/2026
+// VERSÃO DE TITÂNIO - BLINDAGEM CONTRA TAGS VAZIAS (14/04/2026)
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,6 +22,7 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
+// Provedor SEFAZ (Filtra a tag KeyInfo)
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
@@ -36,19 +37,25 @@ class SefazKeyInfo {
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
-const norm = (v: any, max: number = 60) => String(v ?? "")
-  .replace(/[\r\n\t]+/g, " ") 
-  .replace(/\s{2,}/g, " ")
-  .trim()
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .replace(/[<>&\"]/g, "")
-  .toUpperCase()
-  .substring(0, max);
+// A FUNÇÃO SALVADORA: Impede que qualquer tag tenha menos de 2 caracteres
+const safeStr = (v: any, fallback: string, max: number = 60) => {
+  let s = String(v ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[<>&\"]/g, "")
+    .toUpperCase();
+  
+  // Se o Lovable mandou vazio ou só 1 letra, joga o Fallback seguro!
+  if (s.length < 2) return fallback.substring(0, max);
+  return s.substring(0, max);
+};
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: EXTERMINADOR DE CARACTERES ATIVADO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: O CÓDIGO DE TITÂNIO ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -84,17 +91,23 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(norm(p.emitente.razao_social)).up();
-    if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia)).up();
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "EMPRESA NAO INFORMADA")).up();
+    
+    const nomeFantasia = safeStr(p.emitente.nome_fantasia, "");
+    if (nomeFantasia.length >= 2) emit.ele("xFant").txt(nomeFantasia).up();
     
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro || "RUA NAO INFORMADA")).up()
-             .ele("nro").txt(norm(p.emitente.numero || p.emitente.numero_endereco || "SN")).up();
-    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento)).up();
+    enderEmit.ele("xLgr").txt(safeStr(p.emitente.logradouro, "RUA NAO INFORMADA")).up()
+             .ele("nro").txt(safeStr(p.emitente.numero || p.emitente.numero_endereco, "SN")).up();
+             
+    const complemento = safeStr(p.emitente.complemento, "");
+    if (complemento.length >= 2) enderEmit.ele("xCpl").txt(complemento).up();
     
     const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
-    enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO")).up().ele("cMun").txt("5212501").up()
-             .ele("xMun").txt(norm(p.emitente.cidade || "LUZIANIA")).up().ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
+    enderEmit.ele("xBairro").txt(safeStr(p.emitente.bairro, "CENTRO")).up()
+             .ele("cMun").txt("5212501").up()
+             .ele("xMun").txt(safeStr(p.emitente.cidade, "LUZIANIA")).up()
+             .ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
              .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
@@ -102,7 +115,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     if (cpf.length === 11) { 
       const dest = infNFe.ele("dest");
       dest.ele("CPF").txt(cpf).up();
-      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome)).up();
+      if (p.destinatario?.nome) dest.ele("xNome").txt(safeStr(p.destinatario.nome, "CLIENTE")).up();
       dest.ele("indIEDest").txt("9");
     }
 
@@ -112,15 +125,21 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       const v = safeNo(it.valor_unitario);
       const totalItem = Number((q * v).toFixed(2));
       somaProdutos += totalItem;
+      
+      const ncmSafe = clean(it.ncm);
+      const cfopSafe = clean(it.cfop);
 
       const det = infNFe.ele("det", { nItem: String(i + 1) });
       const prod = det.ele("prod");
-      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1, 60)).up().ele("cEAN").txt("SEM GTIN").up()
-          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up()
-          .ele("NCM").txt(clean(it.ncm) || "21069090").up().ele("CFOP").txt(clean(it.cfop) || "5102").up()
+      prod.ele("cProd").txt(safeStr(it.codigo_produto || i + 1, "PROD01")).up()
+          .ele("cEAN").txt("SEM GTIN").up()
+          .ele("xProd").txt(safeStr(it.descricao, "PRODUTO DIVERSO", 120)).up()
+          .ele("NCM").txt(ncmSafe.length === 8 ? ncmSafe : "21069090").up()
+          .ele("CFOP").txt(cfopSafe.length === 4 ? cfopSafe : "5102").up()
           .ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
           .ele("vUnCom").txt(v.toFixed(4)).up()
-          .ele("vProd").txt(totalItem.toFixed(2)).up().ele("cEANTrib").txt("SEM GTIN").up()
+          .ele("vProd").txt(totalItem.toFixed(2)).up()
+          .ele("cEANTrib").txt("SEM GTIN").up()
           .ele("uTrib").txt("UN").up().ele("qTrib").txt(q.toFixed(4)).up()
           .ele("vUnTrib").txt(v.toFixed(4)).up()
           .ele("indTot").txt("1");
@@ -150,6 +169,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
 
+    // ASSINATURA RIGOROSA (RSA-SHA256)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
@@ -178,14 +198,14 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     
     let xmlFinal = signedXml.replace('<Signature', `${suplXml}<Signature`);
     
+    // Purificação Final de Namespaces
     xmlFinal = xmlFinal.replace(/xmlns:ns\d="[^"]*"/g, "");
     xmlFinal = xmlFinal.replace(/xmlns=""/g, "");
-    xmlFinal = xmlFinal.replace(/\s{2,}/g, " "); 
     if (!xmlFinal.includes('xmlns="http://www.portalfiscal.inf.br/nfe"')) {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
       httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
@@ -215,4 +235,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Exterminador"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Titânio"));
