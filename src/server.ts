@@ -1,4 +1,4 @@
-// VERSÃO BYPASS - HOMOLOGAÇÃO GOIÁS - 14/04/2026
+// VERSÃO BYPASS ABSOLUTO - HOMOLOGAÇÃO GOIÁS - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -31,7 +31,7 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: BYPASS DE HOMOLOGAÇÃO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: BYPASS ABSOLUTO ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -62,7 +62,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const ide = infNFe.ele("ide");
     ide.ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up()
        .ele("serie").txt(serieStr).up().ele("nNF").txt(numeroStr).up().ele("dhEmi").txt(dh).up()
-       .ele("tpNF").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up() // Removido idDest temporariamente
+       .ele("tpNF").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up() // idDest REMOVIDO!
        .ele("tpEmis").txt("1").up().ele("cDV").txt(dv).up().ele("tpAmb").txt(String(tpAmb)).up()
        .ele("finNFe").txt("1").up().ele("indFinal").txt("1").up().ele("indPres").txt("1").up()
        .ele("indIntermed").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
@@ -82,8 +82,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
              .ele("cPais").txt("1058").up()
              .ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
-
-    // BYPASS: Removendo cliente para simplificar a nota (NFC-e permite até 10 mil reais)
 
     let somaProdutos = 0;
     let vFreteOriginal = safeNo(p.valor_frete || p.totais?.valor_frete || 0);
@@ -105,7 +103,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       const prod = det.ele("prod");
       prod.ele("cProd").txt(safeStr(it.codigo_produto || i + 1, "PROD01")).up()
           .ele("cEAN").txt("SEM GTIN").up()
-          .ele("xProd").txt(safeStr(it.descricao, "NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL", 120)).up() // Nome Exigido em Homologacao
+          .ele("xProd").txt("NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL").up() // BYPASS EXIGIDO EM GOIAS
           .ele("NCM").txt("21069090").up() // NCM Fixo Universal
           .ele("CFOP").txt("5102").up()
           .ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
@@ -177,7 +175,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    console.log("=== XML BYPASS HOMOLOGAÇÃO ===");
+    console.log("=== XML BYPASS ABSOLUTO ===");
     console.log(xmlFinal);
 
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
@@ -210,4 +208,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Bypass"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Bypass Absoluto"));
