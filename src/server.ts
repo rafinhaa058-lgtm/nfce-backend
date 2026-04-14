@@ -63,7 +63,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     ide.ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up()
        .ele("serie").txt(serieStr).up().ele("nNF").txt(numeroStr).up().ele("dhEmi").txt(dh).up()
        .ele("tpNF").txt("1").up()
-       .ele("idDest").txt("1").up() // AQUI! A tag obrigatória que eu tinha apagado sem querer
+       .ele("idDest").txt("1").up() // A TAG OBRIGATÓRIA QUE HAVIA SUMIDO
        .ele("cMunFG").txt("5212501").up()
        .ele("tpImp").txt("4").up()
        .ele("tpEmis").txt("1").up().ele("cDV").txt(dv).up().ele("tpAmb").txt(String(tpAmb)).up()
@@ -145,13 +145,13 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     
-    // AQUI! O SHA-256 CORRETO VOLTOU E NÃO SAI MAIS!
+    // AQUI! O SHA-256 CORRETO E BLINDADO
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256", // SHA-256 OBRIGATÓRIO!
+      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
       uri: `#NFe${chave}`
     });
 
