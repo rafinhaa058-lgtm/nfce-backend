@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - SINCRONIZADO COM LOVABLE (FRETE + CSC RAIZ) - 14/04/2026
+// VERSÃO IMPLACÁVEL - PURIFICAÇÃO DE NAMESPACE - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,7 +22,7 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// Provedor SEFAZ (Filtra sujeiras da assinatura para evitar Erro 225)
+// Provedor SEFAZ (Filtra a tag KeyInfo)
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
@@ -40,7 +40,7 @@ const norm = (v: any, max: number = 60) => String(v ?? "").trim().normalize("NFD
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: SINCRONIZADO COM FRONTEND LOVABLE ---");
+  console.log("--- EMISSÃO LUZIÂNIA: O CÓDIGO IMPLACÁVEL ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -64,7 +64,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
     const chave = base43 + dv;
 
-    // XML BASE
     const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
 
@@ -80,11 +79,9 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(norm(p.emitente.razao_social)).up();
     if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia)).up();
     
-    // Endereço agora vem limpo do Lovable
     const enderEmit = emit.ele("enderEmit");
     enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro || "RUA NAO INFORMADA")).up()
              .ele("nro").txt(norm(p.emitente.numero || p.emitente.numero_endereco || "SN")).up();
-    
     if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento)).up();
     
     const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
@@ -101,7 +98,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       dest.ele("indIEDest").txt("9");
     }
 
-    // ITENS: Somando os produtos para a matemática da SEFAZ
     let somaProdutos = 0;
     p.itens.forEach((it: any, i: number) => {
       const q = safeNo(it.quantidade || 1);
@@ -125,7 +121,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
          .ele("COFINS").ele("COFINSNT").ele("CST").txt("07");
     });
 
-    // MATEMÁTICA CORRIGIDA (Produtos + Frete = Total da Nota)
     const vProdFinal = somaProdutos;
     const vFrete = safeNo(p.valor_frete || p.totais?.valor_frete || 0);
     const vTotalNota = (vProdFinal + vFrete).toFixed(2);
@@ -133,13 +128,10 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const tot = infNFe.ele("total").ele("ICMSTot");
     tot.ele("vBC").txt("0.00").up().ele("vICMS").txt("0.00").up().ele("vICMSDeson").txt("0.00").up().ele("vFCP").txt("0.00").up()
        .ele("vBCST").txt("0.00").up().ele("vST").txt("0.00").up().ele("vFCPST").txt("0.00").up().ele("vFCPSTRet").txt("0.00").up()
-       .ele("vProd").txt(vProdFinal.toFixed(2)).up()
-       .ele("vFrete").txt(vFrete.toFixed(2)).up() // Frete enviado pelo Lovable
+       .ele("vProd").txt(vProdFinal.toFixed(2)).up().ele("vFrete").txt(vFrete.toFixed(2)).up()
        .ele("vSeg").txt("0.00").up().ele("vDesc").txt("0.00").up()
        .ele("vII").txt("0.00").up().ele("vIPI").txt("0.00").up().ele("vIPIDevol").txt("0.00").up().ele("vPIS").txt("0.00").up()
-       .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up()
-       .ele("vNF").txt(vTotalNota).up() // O Valor final da nota bate!
-       .ele("vTotTrib").txt("0.00");
+       .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotalNota).up().ele("vTotTrib").txt("0.00");
 
     infNFe.ele("transp").ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
@@ -148,7 +140,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
 
-    // ASSINATURA RIGOROSA SHA-256
+    // ASSINATURA RIGOROSA (RSA-SHA256 é obrigatório no MOC 7.0)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
@@ -165,11 +157,9 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     sig.computeSignature(xmlRaw, { location: { reference: "//*[local-name(.)='NFe']", action: "append" } });
     let signedXml = sig.getSignedXml().replace(/(\r\n|\n|\r)/gm, "");
 
-    // QR CODE (Agora lendo as tags da raiz do payload conforme Lovable atualizou)
     const cscRaw = String(p.token_csc || p.certificado?.csc || p.certificado?.csc_token || "").trim();
     const cscIdRaw = p.csc_id || p.certificado?.csc_id || p.certificado?.cscId || "1";
     const cscIdSafe = clean(String(cscIdRaw)).padStart(6, "0");
-    
     const qrConcat = `${chave}|2|${tpAmb}|${cscIdSafe}${cscRaw}`;
     const hash = crypto.createHash("sha1").update(qrConcat).digest("hex").toUpperCase();
     const urlC = tpAmb === 1 ? SEFAZ_GO.qrProd : SEFAZ_GO.qrHomolog;
@@ -177,11 +167,15 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const suplXml = `<infNFeSupl><qrCode><![CDATA[${qrCode}]]></qrCode><urlChave>${urlC}</urlChave></infNFeSupl>`;
     
+    // Injeta o suplemento preservando a assinatura
     let xmlFinal = signedXml.replace('<Signature', `${suplXml}<Signature`);
     
-    if (!xmlFinal.includes('xmlns="http://www.portalfiscal.inf.br/nfe"')) {
-       xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
-    }
+    // === A PURIFICAÇÃO DEFINITIVA DO SCHEMA ===
+    // Remove qualquer namespace fantasma (ns0, ds, etc) que o xml-crypto tente empurrar na tag raiz
+    xmlFinal = xmlFinal.replace(/xmlns:ns\d="[^"]*"/g, "");
+    xmlFinal = xmlFinal.replace(/xmlns:ds="[^"]*"/g, "");
+    xmlFinal = xmlFinal.replace(/\s{2,}/g, " "); // Limpa espaços duplos
+    xmlFinal = xmlFinal.replace(/<NFe[^>]*>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
 
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
@@ -196,9 +190,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const cStat = String(ret?.protNFe?.infProt?.cStat || ret?.cStat || "0");
     
     console.log("CSTAT FINAL SEFAZ-GO:", cStat);
-    if (cStat !== "100") {
-        console.log("MOTIVO:", ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo);
-    }
+    if (cStat !== "100") console.log("MOTIVO:", ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo);
 
     res.json({ 
       autorizado: cStat === "100", 
@@ -206,8 +198,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       motivo: ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo || "Erro desconhecido", 
       chave_acesso: chave,
       protocolo: ret?.protNFe?.infProt?.nProt || "",
-      cStat: cStat,
-      sefaz_debug: ret 
+      cStat: cStat
     });
 
   } catch (err: any) {
@@ -216,4 +207,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Payload Sincronizado"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Purificado"));
