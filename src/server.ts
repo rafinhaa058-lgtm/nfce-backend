@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - ENDEREÇO TRAVADO NO CÓDIGO - 14/04/2026
+// VERSÃO DO MILAGRE - FIX KEYINFO (CERTIFICADO NA ASSINATURA) - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,13 +22,15 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
+// 🚨 A CORREÇÃO DO ERRO 225 ESTÁ AQUI: O wrapper <KeyInfo> que a SEFAZ exige!
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
     this.cert = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/[\r\n]/g, "");
   }
-  getKeyInfo() {
-    return `<X509Data><X509Certificate>${this.cert}</X509Certificate></X509Data>`;
+  // Agora o xml-crypto vai obrigatoriamente colar isso dentro da <Signature>
+  getKeyInfo(key?: any, prefix?: string) {
+    return `<KeyInfo><X509Data><X509Certificate>${this.cert}</X509Certificate></X509Data></KeyInfo>`;
   }
   getKey() { return null; }
 }
@@ -52,7 +54,7 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: ENDEREÇO TRAVADO NO CÓDIGO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: O MILAGRE DAS 23:59 ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -88,21 +90,24 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "GORDINHO LANCHES LTDA")).up()
-        .ele("xFant").txt("GORDINHO LANCHES").up();
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "EMPRESA NAO INFORMADA")).up();
     
-    // AQUI MORRE O ERRO 225: Endereço do Emitente blindado (O XSD da SEFAZ ama essa formatação)
+    const nomeFantasia = safeStr(p.emitente.nome_fantasia, "");
+    if (nomeFantasia.length >= 2) emit.ele("xFant").txt(nomeFantasia).up();
+    
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt("QUADRA 472").up()
-             .ele("nro").txt("1").up()
-             .ele("xCpl").txt("QUIOSQUE 1").up()
-             .ele("xBairro").txt("CENTRO").up()
+    enderEmit.ele("xLgr").txt(safeStr(p.emitente.logradouro, "RUA NAO INFORMADA")).up()
+             .ele("nro").txt(safeStr(p.emitente.numero || p.emitente.numero_endereco, "SN")).up();
+             
+    const complemento = safeStr(p.emitente.complemento, "");
+    if (complemento.length >= 2) enderEmit.ele("xCpl").txt(complemento).up();
+    
+    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
+    enderEmit.ele("xBairro").txt(safeStr(p.emitente.bairro, "CENTRO")).up()
              .ele("cMun").txt("5212501").up()
-             .ele("xMun").txt("LUZIANIA").up()
-             .ele("UF").txt("GO").up()
-             .ele("CEP").txt("72856472").up()
-             .ele("cPais").txt("1058").up()
-             .ele("xPais").txt("BRASIL");
+             .ele("xMun").txt(safeStr(p.emitente.cidade, "LUZIANIA")).up()
+             .ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
+             .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
     const cpf = clean(p.destinatario?.cpf);
@@ -158,7 +163,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     infNFe.ele("transp").ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
-    pag.ele("detPag").ele("tPag").txt("01").up().ele("vPag").txt(vTotalNota);
+    pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotalNota);
     pag.ele("vTroco").txt("0.00");
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
@@ -193,6 +198,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     
     xmlFinal = xmlFinal.replace(/xmlns:ns\d="[^"]*"/g, "");
     xmlFinal = xmlFinal.replace(/xmlns=""/g, "");
+    xmlFinal = xmlFinal.replace(/\s{2,}/g, " "); 
     if (!xmlFinal.includes('xmlns="http://www.portalfiscal.inf.br/nfe"')) {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
@@ -231,4 +237,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Endereço Seguro"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Milagre"));
