@@ -1,4 +1,4 @@
-// VERSÃO DE TITÂNIO - BLINDAGEM CONTRA TAGS VAZIAS (14/04/2026)
+// VERSÃO RAIO-X DE EMERGÊNCIA - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,7 +22,6 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// Provedor SEFAZ (Filtra a tag KeyInfo)
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
@@ -37,7 +36,6 @@ class SefazKeyInfo {
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
-// A FUNÇÃO SALVADORA: Impede que qualquer tag tenha menos de 2 caracteres
 const safeStr = (v: any, fallback: string, max: number = 60) => {
   let s = String(v ?? "")
     .replace(/[\r\n\t]+/g, " ")
@@ -48,14 +46,13 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
     .replace(/[<>&\"]/g, "")
     .toUpperCase();
   
-  // Se o Lovable mandou vazio ou só 1 letra, joga o Fallback seguro!
   if (s.length < 2) return fallback.substring(0, max);
   return s.substring(0, max);
 };
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: O CÓDIGO DE TITÂNIO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: RAIO-X ATIVADO ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -169,7 +166,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
 
-    // ASSINATURA RIGOROSA (RSA-SHA256)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
@@ -198,14 +194,18 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     
     let xmlFinal = signedXml.replace('<Signature', `${suplXml}<Signature`);
     
-    // Purificação Final de Namespaces
     xmlFinal = xmlFinal.replace(/xmlns:ns\d="[^"]*"/g, "");
     xmlFinal = xmlFinal.replace(/xmlns=""/g, "");
     if (!xmlFinal.includes('xmlns="http://www.portalfiscal.inf.br/nfe"')) {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+    // IMPRIME O XML GERADO PARA ANÁLISE SE DER ERRO
+    console.log("=== INICIO DO XML ===");
+    console.log(xmlFinal);
+    console.log("=== FIM DO XML ===");
+
+    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
       httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
@@ -235,4 +235,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Titânio"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Raio-X"));
