@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - A BALA DE PRATA (FIX TYPESCRIPT) - 14/04/2026
+// VERSÃO DA VITÓRIA ABSOLUTA - FIX ALGORITMO SHA1 - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,7 +22,7 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// --- A SOLUÇÃO DO ERRO 225: Provedor de Assinatura Exclusivo SEFAZ ---
+// Provedor SEFAZ (Garante que só o Certificado X509 vai na assinatura)
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
@@ -34,18 +34,16 @@ class SefazKeyInfo {
   getKey() { return null; }
 }
 
-// --- Funções de Limpeza ---
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const norm = (v: any, max: number = 60) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase().substring(0, max);
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- EMISSÃO LUZIÂNIA: O ATAQUE FINAL AO SCHEMA ---");
+  console.log("--- EMISSÃO LUZIÂNIA: ATIVANDO PROTOCOLO SHA-1 SEFAZ ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
 
-    // 1. LER CERTIFICADO
     const certBuffer = Buffer.from(p.certificado.pfx_base64, "base64");
     const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), String(p.certificado.senha));
     const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]![0];
@@ -53,22 +51,18 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
-    // 2. CHAVE DE ACESSO
     const cnpj = clean(p.emitente.cnpj).padStart(14, "0").slice(-14);
     const dh = new Date(new Date().getTime() - (3 * 60 * 60 * 1000)).toISOString().replace(/\.\d+Z$/, "-03:00");
     const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
     const serieStr = clean(String(p.serie || 1)) || "1";
     const numeroStr = clean(String(p.numero || 1)) || "1";
-    const seriePad = serieStr.padStart(3, "0");
-    const nNFPad = numeroStr.padStart(9, "0");
-
-    const base43 = `52${dh.slice(2, 4)}${dh.slice(5, 7)}${cnpj}65${seriePad}${nNFPad}1${cNF}`;
+    
+    const base43 = `52${dh.slice(2, 4)}${dh.slice(5, 7)}${cnpj}65${serieStr.padStart(3, "0")}${numeroStr.padStart(9, "0")}1${cNF}`;
     let soma = 0, peso = 2;
     for (let i = base43.length - 1; i >= 0; i--) { soma += Number(base43[i]) * peso; peso = peso === 9 ? 2 : peso + 1; }
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
     const chave = base43 + dv;
 
-    // 3. XML BASE
     const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
 
@@ -134,7 +128,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const pag = infNFe.ele("pag");
     pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
 
-    // 4. QR CODE
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
     const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
@@ -147,28 +140,28 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const xmlRaw = root.end({ headless: true });
 
-    // 5. ASSINATURA BLINDADA
+    // 5. ASSINATURA OBRIGATÓRIA DA SEFAZ (O FIM DO ERRO 225)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
-    sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
-    sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
     
-    // BURLANDO O TYPESCRIPT AQUI:
+    // AQUI ESTAVA O SEGREDO! Tem que ser SHA-1, a SEFAZ rejeita SHA-256 no schema.
+    sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
+    sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
+    
     (sig as any).keyInfoProvider = new SefazKeyInfo(certPem);
 
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
+      digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1", // OBRIGATÓRIO SHA-1
       uri: `#NFe${chave}`
     });
 
-    sig.computeSignature(xmlRaw);
+    sig.computeSignature(xmlRaw, { location: { reference: "//*[local-name(.)='NFe']", action: "append" } });
     
-    const signatureXml = sig.getSignatureXml();
-    const xmlFinal = xmlRaw.replace("</NFe>", `${signatureXml}</NFe>`);
+    let xmlFinal = sig.getSignedXml();
+    xmlFinal = xmlFinal.replace(/<NFe>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
 
-    // 6. ENVELOPE E ENVIO
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
@@ -177,14 +170,12 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       validateStatus: () => true
     });
 
-    console.log("=== RESPOSTA SEFAZ-GO BLINDADA ===");
-    console.log(resSefaz.data);
-
     const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
     const ret = result["soap:Envelope"]?.["soap:Body"]?.nfeResultMsg?.retEnviNFe || result["env:Envelope"]?.["env:Body"]?.nfeResultMsg?.retEnviNFe;
     const cStat = String(ret?.protNFe?.infProt?.cStat || ret?.cStat || "0");
     
     console.log("CSTAT FINAL SEFAZ-GO:", cStat);
+    console.log("LOG COMPLETO:", JSON.stringify(ret));
 
     res.json({ 
       autorizado: cStat === "100", 
@@ -200,4 +191,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - A Bala de Prata"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - SHA1"));
