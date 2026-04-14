@@ -1,4 +1,4 @@
-// VERSÃO BALA DE PRATA - 14/04/2026 18:00
+// VERSÃO DEFINITIVA - A BALA DE PRATA (14/04/2026)
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,16 +22,12 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// --- HELPERS DE LIMPEZA E TAMANHO OBRIGATÓRIOS ---
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const norm = (v: any, maxLen: number) => {
-  let s = String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase();
-  return s.substring(0, maxLen);
-};
+const norm = (v: any, max: number = 60) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase().substring(0, max);
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- INICIANDO EMISSÃO LUZIÂNIA (INJEÇÃO MANUAL DE ASSINATURA) ---");
+  console.log("--- EMISSÃO LUZIÂNIA: MODO BLINDADO (FIX URI & CDATA) ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -57,7 +53,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
     const chave = base43 + dv;
 
-    // 3. MONTAGEM DO XML BASE
+    // 3. XML BASE
     const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
 
@@ -70,30 +66,32 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(norm(p.emitente.razao_social, 60)).up();
-    if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia, 60)).up();
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(norm(p.emitente.razao_social)).up();
+    if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia)).up();
     
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro, 60)).up().ele("nro").txt(norm(p.emitente.numero || "SN", 60)).up();
-    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento, 60)).up();
-    enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO", 60)).up().ele("cMun").txt("5212501").up()
-             .ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(clean(p.emitente.cep)).up()
+    enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro)).up().ele("nro").txt(norm(p.emitente.numero || "SN")).up();
+    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento)).up();
+    
+    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(0, 8);
+    enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO")).up().ele("cMun").txt("5212501").up()
+             .ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
              .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
     if (clean(p.destinatario?.cpf)) {
       const dest = infNFe.ele("dest");
       dest.ele("CPF").txt(clean(p.destinatario.cpf)).up();
-      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome, 60)).up();
+      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome)).up();
       dest.ele("indIEDest").txt("9");
     }
 
     p.itens.forEach((it: any, i: number) => {
       const q = safeNo(it.quantidade || 1);
       const v = safeNo(it.valor_unitario);
-      const det = infNFe.ele("det", { nItem: i + 1 });
+      const det = infNFe.ele("det", { nItem: String(i + 1) });
       const prod = det.ele("prod");
-      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1, 60)).up().ele("cEAN").txt("SEM GTIN").up()
+      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1)).up().ele("cEAN").txt("SEM GTIN").up()
           .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up().ele("NCM").txt(clean(it.ncm) || "21069090").up()
           .ele("CFOP").txt(clean(it.cfop) || "5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
           .ele("vUnCom").txt(v.toFixed(2)).up().ele("vProd").txt((q * v).toFixed(2)).up()
@@ -115,9 +113,11 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotal).up().ele("vTotTrib").txt("0.00");
 
     infNFe.ele("transp").ele("modFrete").txt("9");
-    infNFe.ele("pag").ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
+    const pag = infNFe.ele("pag");
+    pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
+    pag.ele("vTroco").txt("0.00"); // Trava de segurança para schema de pagamento
 
-    // 4. INJEÇÃO DO QR CODE
+    // 4. INJEÇÃO DO QR CODE ANTES DE ASSINAR (Sem CDATA)
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
     const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
@@ -126,27 +126,33 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const qrCode = `${urlC}?p=${chave}|2|${tpAmb}|${cscId}|${hash}`;
 
     const supl = root.ele("infNFeSupl");
-    supl.ele("qrCode").dat(qrCode).up().ele("urlChave").txt(urlC);
+    supl.ele("qrCode").txt(qrCode).up().ele("urlChave").txt(urlC);
 
     const xmlRaw = root.end({ headless: true });
 
-    // 5. ASSINATURA DIGITAL ISOLADA (Isso mata o Erro 225 de ordem!)
+    // 5. ASSINATURA DIGITAL (O Vilão do erro 225 corrigido)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.publicCert = certPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+    
+    // AQUI ESTÁ A CORREÇÃO PRINCIPAL: O campo 'uri' é obrigatório no schema da SEFAZ!
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256"
+      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
+      uri: `#NFe${chave}` 
     });
 
-    sig.computeSignature(xmlRaw);
-    const signatureOnly = sig.getSignatureXml(); 
+    // Injeta a assinatura garantindo que fique no final da NFe
+    sig.computeSignature(xmlRaw, {
+      location: { reference: "//*[local-name(.)='NFe']", action: "append" }
+    });
     
-    // Cola a assinatura no final, garantindo a ordem: infNFe -> infNFeSupl -> Signature
-    const xmlFinal = xmlRaw.replace("</NFe>", `${signatureOnly}</NFe>`);
+    let xmlFinal = sig.getSignedXml();
+    // Garante que o namespace principal não suma (Outro causador do 225)
+    xmlFinal = xmlFinal.replace(/<NFe>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
 
     // 6. ENVIO SEFAZ
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
@@ -156,6 +162,10 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       headers: { "Content-Type": "application/soap+xml; charset=utf-8" },
       validateStatus: () => true
     });
+
+    console.log("=== RESPOSTA BRUTA DA SEFAZ ===");
+    console.log(resSefaz.data); // Isso vai nos dizer TUDO caso dê erro
+    console.log("===============================");
 
     const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
     const ret = result["soap:Envelope"]?.["soap:Body"]?.nfeResultMsg?.retEnviNFe || result["env:Envelope"]?.["env:Body"]?.nfeResultMsg?.retEnviNFe;
