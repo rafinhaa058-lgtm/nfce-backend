@@ -1,4 +1,4 @@
-// VERSÃO JÚNIOR - O ACHATADOR DE XML (14/04/2026)
+// VERSÃO DEFINITIVA - A BALA DE PRATA (FIX KEYINFO) - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,16 +22,32 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
+// --- A SOLUÇÃO DO ERRO 225: Provedor de Assinatura Exclusivo SEFAZ ---
+class SefazKeyInfo {
+  cert: string;
+  constructor(certPem: string) {
+    // Remove cabeçalhos e quebras de linha do certificado para ficar 100% limpo
+    this.cert = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/[\r\n]/g, "");
+  }
+  getKeyInfo() {
+    // Retorna APENAS a tag X509Data. Se enviar KeyValue junto, a SEFAZ dá Erro 225!
+    return `<X509Data><X509Certificate>${this.cert}</X509Certificate></X509Data>`;
+  }
+  getKey() { return null; }
+}
+
+// --- Funções de Limpeza ---
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const norm = (v: any, max: number = 60) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase().substring(0, max);
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- EMISSÃO LUZIÂNIA: MODO XML ACHATADO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: O ATAQUE FINAL AO SCHEMA ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
 
+    // 1. LER CERTIFICADO
     const certBuffer = Buffer.from(p.certificado.pfx_base64, "base64");
     const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), String(p.certificado.senha));
     const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]![0];
@@ -39,6 +55,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
+    // 2. CHAVE DE ACESSO (Sem zeros na tag nNF)
     const cnpj = clean(p.emitente.cnpj).padStart(14, "0").slice(-14);
     const dh = new Date(new Date().getTime() - (3 * 60 * 60 * 1000)).toISOString().replace(/\.\d+Z$/, "-03:00");
     const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
@@ -53,6 +70,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
     const chave = base43 + dv;
 
+    // 3. XML BASE
     const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
 
@@ -70,11 +88,21 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     
     const enderEmit = emit.ele("enderEmit");
     enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro)).up().ele("nro").txt(norm(p.emitente.numero || "SN")).up();
+    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento)).up();
+    
     const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
     enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO")).up().ele("cMun").txt("5212501").up()
              .ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
              .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
+
+    const cpf = clean(p.destinatario?.cpf);
+    if (cpf.length === 11) { 
+      const dest = infNFe.ele("dest");
+      dest.ele("CPF").txt(cpf).up();
+      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome)).up();
+      dest.ele("indIEDest").txt("9");
+    }
 
     p.itens.forEach((it: any, i: number) => {
       const q = safeNo(it.quantidade || 1);
@@ -82,8 +110,10 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       const det = infNFe.ele("det", { nItem: String(i + 1) });
       const prod = det.ele("prod");
       prod.ele("cProd").txt(norm(it.codigo_produto || i + 1, 60)).up().ele("cEAN").txt("SEM GTIN").up()
-          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up().ele("NCM").txt("21069090").up()
-          .ele("CFOP").txt("5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
+          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up()
+          .ele("NCM").txt(clean(it.ncm) || "21069090").up()
+          .ele("CFOP").txt(clean(it.cfop) || "5102").up()
+          .ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
           .ele("vUnCom").txt(v.toFixed(2)).up().ele("vProd").txt((q * v).toFixed(2)).up()
           .ele("cEANTrib").txt("SEM GTIN").up().ele("uTrib").txt("UN").up().ele("qTrib").txt(q.toFixed(4)).up()
           .ele("vUnTrib").txt(v.toFixed(2)).up().ele("indTot").txt("1");
@@ -100,29 +130,34 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("vBCST").txt("0.00").up().ele("vST").txt("0.00").up().ele("vFCPST").txt("0.00").up().ele("vFCPSTRet").txt("0.00").up()
        .ele("vProd").txt(vTotal).up().ele("vFrete").txt("0.00").up().ele("vSeg").txt("0.00").up().ele("vDesc").txt("0.00").up()
        .ele("vII").txt("0.00").up().ele("vIPI").txt("0.00").up().ele("vIPIDevol").txt("0.00").up().ele("vPIS").txt("0.00").up()
-       .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotal); // Removido vTotTrib (opcional que causa erro)
+       .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotal).up().ele("vTotTrib").txt("0.00");
 
     infNFe.ele("transp").ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
     pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
 
+    // 4. QR CODE (Com CDATA Exato)
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
-    const hash = crypto.createHash("sha1").update(`${chave}|2|${tpAmb}|${cscId}${csc}`).digest("hex").toUpperCase();
+    const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
+    const hash = crypto.createHash("sha1").update(qrConcat).digest("hex").toUpperCase();
     const urlC = tpAmb === 1 ? SEFAZ_GO.qrProd : SEFAZ_GO.qrHomolog;
     const qrCode = `${urlC}?p=${chave}|2|${tpAmb}|${cscId}|${hash}`;
 
     const supl = root.ele("infNFeSupl");
-    supl.ele("qrCode").txt(qrCode).up().ele("urlChave").txt(urlC);
+    supl.ele("qrCode").dat(qrCode).up().ele("urlChave").txt(urlC);
 
-    // O SEGREDO: prettyPrint false cria uma linha só de XML, sem quebras que destroem a assinatura
-    const xmlRaw = root.end({ headless: true, prettyPrint: false });
+    const xmlRaw = root.end({ headless: true });
 
+    // 5. ASSINATURA BLINDADA
     const sig = new SignedXml();
     sig.privateKey = keyPem;
-    sig.publicCert = certPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+    
+    // A mágica acontece aqui: Ativamos o Provedor exclusivo da SEFAZ
+    sig.keyInfoProvider = new SefazKeyInfo(certPem);
+
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
@@ -130,12 +165,13 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       uri: `#NFe${chave}`
     });
 
-    sig.computeSignature(xmlRaw, { location: { reference: "//*[local-name(.)='NFe']", action: "append" } });
+    sig.computeSignature(xmlRaw);
     
-    // Força a remoção de TODAS as quebras de linha invisíveis que a biblioteca de assinatura cria
-    let xmlFinal = sig.getSignedXml().replace(/(\r\n|\n|\r)/gm, "");
-    xmlFinal = xmlFinal.replace(/<NFe>/, '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
+    // Injeção manual cirúrgica para garantir namespaces intactos
+    const signatureXml = sig.getSignatureXml();
+    const xmlFinal = xmlRaw.replace("</NFe>", `${signatureXml}</NFe>`);
 
+    // 6. ENVELOPE E ENVIO
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Header/><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
@@ -144,7 +180,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
       validateStatus: () => true
     });
 
-    console.log("=== RESPOSTA SEFAZ-GO ACHATADA ===");
+    console.log("=== RESPOSTA SEFAZ-GO BLINDADA ===");
     console.log(resSefaz.data);
 
     const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
@@ -167,4 +203,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Júnior"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - A Bala de Prata"));
