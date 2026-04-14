@@ -1,3 +1,4 @@
+// VERSÃO BALA DE PRATA - 14/04/2026 18:00
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -21,18 +22,21 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// --- Helpers de Limpeza Segura ---
+// --- HELPERS DE LIMPEZA E TAMANHO OBRIGATÓRIOS ---
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-const norm = (v: any) => String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase();
+const norm = (v: any, maxLen: number) => {
+  let s = String(v ?? "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[<>&\"]/g, "").toUpperCase();
+  return s.substring(0, maxLen);
+};
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
-  console.log("--- NOVA TENTATIVA NFC-E (LUZIÂNIA - ORDEM ESTRITA) ---");
+  console.log("--- INICIANDO EMISSÃO LUZIÂNIA (INJEÇÃO MANUAL DE ASSINATURA) ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
 
-    // 1. Processar Certificado PFX
+    // 1. CERTIFICADO
     const certBuffer = Buffer.from(p.certificado.pfx_base64, "base64");
     const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(forge.util.createBuffer(certBuffer.toString("binary"))), String(p.certificado.senha));
     const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]![0];
@@ -40,7 +44,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
-    // 2. Chave de Acesso (14 dígitos CNPJ obrigatórios)
+    // 2. CHAVE DE ACESSO
     const cnpj = clean(p.emitente.cnpj).padStart(14, "0");
     const dh = new Date(new Date().getTime() - (3 * 60 * 60 * 1000)).toISOString().replace(/\.\d+Z$/, "-03:00");
     const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
@@ -53,121 +57,67 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const dv = (soma % 11 === 0 || soma % 11 === 1) ? "0" : String(11 - (soma % 11));
     const chave = base43 + dv;
 
-    // 3. Montar XML - Passo a Passo com xmlbuilder2
+    // 3. MONTAGEM DO XML BASE
     const root = create({ version: "1.0", encoding: "UTF-8" }).ele("NFe", { xmlns: "http://www.portalfiscal.inf.br/nfe" });
     const infNFe = root.ele("infNFe", { versao: "4.00", Id: `NFe${chave}` });
 
-    // Grupo IDE (Adicionado indInter obrigatório)
     const ide = infNFe.ele("ide");
-    ide.ele("cUF").txt("52");
-    ide.ele("cNF").txt(cNF);
-    ide.ele("natOp").txt("VENDA");
-    ide.ele("mod").txt("65");
-    ide.ele("serie").txt(String(p.serie || 1));
-    ide.ele("nNF").txt(String(p.numero || 1));
-    ide.ele("dhEmi").txt(dh);
-    ide.ele("tpNF").txt("1");
-    ide.ele("idDest").txt("1");
-    ide.ele("cMunFG").txt("5212501");
-    ide.ele("tpImp").txt("4");
-    ide.ele("tpEmis").txt("1");
-    ide.ele("cDV").txt(dv);
-    ide.ele("tpAmb").txt(String(tpAmb));
-    ide.ele("finNFe").txt("1");
-    ide.ele("indFinal").txt("1");
-    ide.ele("indPres").txt("1"); 
-    ide.ele("indInter").txt("0"); // OBRIGATÓRIO: 0 = Sem intermediador
-    ide.ele("procEmi").txt("0");
-    ide.ele("verProc").txt("1.0.0");
+    ide.ele("cUF").txt("52").up().ele("cNF").txt(cNF).up().ele("natOp").txt("VENDA").up().ele("mod").txt("65").up()
+       .ele("serie").txt(serie).up().ele("nNF").txt(nNF).up().ele("dhEmi").txt(dh).up()
+       .ele("tpNF").txt("1").up().ele("idDest").txt("1").up().ele("cMunFG").txt("5212501").up().ele("tpImp").txt("4").up()
+       .ele("tpEmis").txt("1").up().ele("cDV").txt(dv).up().ele("tpAmb").txt(String(tpAmb)).up()
+       .ele("finNFe").txt("1").up().ele("indFinal").txt("1").up().ele("indPres").txt("1").up()
+       .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
-    // Grupo EMIT
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj);
-    emit.ele("xNome").txt(norm(p.emitente.razao_social));
-    if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia));
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(norm(p.emitente.razao_social, 60)).up();
+    if (p.emitente.nome_fantasia) emit.ele("xFant").txt(norm(p.emitente.nome_fantasia, 60)).up();
+    
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro));
-    enderEmit.ele("nro").txt(norm(p.emitente.numero || "SN"));
-    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento));
-    enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO"));
-    enderEmit.ele("cMun").txt("5212501");
-    enderEmit.ele("xMun").txt("LUZIANIA");
-    enderEmit.ele("UF").txt("GO");
-    enderEmit.ele("CEP").txt(clean(p.emitente.cep));
-    enderEmit.ele("cPais").txt("1058");
-    enderEmit.ele("xPais").txt("BRASIL");
-    emit.ele("IE").txt(clean(p.emitente.inscricao_estadual));
-    emit.ele("CRT").txt("1");
+    enderEmit.ele("xLgr").txt(norm(p.emitente.logradouro, 60)).up().ele("nro").txt(norm(p.emitente.numero || "SN", 60)).up();
+    if (p.emitente.complemento) enderEmit.ele("xCpl").txt(norm(p.emitente.complemento, 60)).up();
+    enderEmit.ele("xBairro").txt(norm(p.emitente.bairro || "CENTRO", 60)).up().ele("cMun").txt("5212501").up()
+             .ele("xMun").txt("LUZIANIA").up().ele("UF").txt("GO").up().ele("CEP").txt(clean(p.emitente.cep)).up()
+             .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
+    emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
-    // Grupo DEST
     if (clean(p.destinatario?.cpf)) {
       const dest = infNFe.ele("dest");
-      dest.ele("CPF").txt(clean(p.destinatario.cpf));
-      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome));
+      dest.ele("CPF").txt(clean(p.destinatario.cpf)).up();
+      if (p.destinatario?.nome) dest.ele("xNome").txt(norm(p.destinatario.nome, 60)).up();
       dest.ele("indIEDest").txt("9");
     }
 
-    // Grupo ITENS
     p.itens.forEach((it: any, i: number) => {
       const q = safeNo(it.quantidade || 1);
       const v = safeNo(it.valor_unitario);
       const det = infNFe.ele("det", { nItem: i + 1 });
       const prod = det.ele("prod");
-      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1));
-      prod.ele("cEAN").txt("SEM GTIN");
-      prod.ele("xProd").txt(norm(it.descricao || "PRODUTO"));
-      prod.ele("NCM").txt(clean(it.ncm) || "21069090");
-      prod.ele("CFOP").txt(clean(it.cfop) || "5102");
-      prod.ele("uCom").txt("UN");
-      prod.ele("qCom").txt(q.toFixed(4));
-      prod.ele("vUnCom").txt(v.toFixed(4));
-      prod.ele("vProd").txt((q * v).toFixed(2));
-      prod.ele("cEANTrib").txt("SEM GTIN");
-      prod.ele("uTrib").txt("UN");
-      prod.ele("qTrib").txt(q.toFixed(4));
-      prod.ele("vUnTrib").txt(v.toFixed(4));
-      prod.ele("indTot").txt("1");
+      prod.ele("cProd").txt(norm(it.codigo_produto || i + 1, 60)).up().ele("cEAN").txt("SEM GTIN").up()
+          .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up().ele("NCM").txt(clean(it.ncm) || "21069090").up()
+          .ele("CFOP").txt(clean(it.cfop) || "5102").up().ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
+          .ele("vUnCom").txt(v.toFixed(2)).up().ele("vProd").txt((q * v).toFixed(2)).up()
+          .ele("cEANTrib").txt("SEM GTIN").up().ele("uTrib").txt("UN").up().ele("qTrib").txt(q.toFixed(4)).up()
+          .ele("vUnTrib").txt(v.toFixed(2)).up().ele("indTot").txt("1");
 
       const imp = det.ele("imposto");
-      const icms = imp.ele("ICMS").ele("ICMSSN102");
-      icms.ele("orig").txt("0");
-      icms.ele("CSOSN").txt("102");
-      imp.ele("PIS").ele("PISNT").ele("CST").txt("07");
-      imp.ele("COFINS").ele("COFINSNT").ele("CST").txt("07");
+      imp.ele("ICMS").ele("ICMSSN102").ele("orig").txt("0").up().ele("CSOSN").txt("102").up().up().up()
+         .ele("PIS").ele("PISNT").ele("CST").txt("07").up().up().up()
+         .ele("COFINS").ele("COFINSNT").ele("CST").txt("07");
     });
 
-    // Grupo TOTAL (Ordem Absoluta MOC)
     const vTotal = safeNo(p.totais.valor_total).toFixed(2);
     const tot = infNFe.ele("total").ele("ICMSTot");
-    tot.ele("vBC").txt("0.00");
-    tot.ele("vICMS").txt("0.00");
-    tot.ele("vICMSDeson").txt("0.00");
-    tot.ele("vFCP").txt("0.00");
-    tot.ele("vBCST").txt("0.00");
-    tot.ele("vST").txt("0.00");
-    tot.ele("vFCPST").txt("0.00");
-    tot.ele("vFCPSTRet").txt("0.00");
-    tot.ele("vProd").txt(vTotal);
-    tot.ele("vFrete").txt("0.00");
-    tot.ele("vSeg").txt("0.00");
-    tot.ele("vDesc").txt("0.00");
-    tot.ele("vII").txt("0.00");
-    tot.ele("vIPI").txt("0.00");
-    tot.ele("vIPIDevol").txt("0.00");
-    tot.ele("vPIS").txt("0.00");
-    tot.ele("vCOFINS").txt("0.00");
-    tot.ele("vOutro").txt("0.00");
-    tot.ele("vNF").txt(vTotal);
-    tot.ele("vTotTrib").txt("0.00");
+    tot.ele("vBC").txt("0.00").up().ele("vICMS").txt("0.00").up().ele("vICMSDeson").txt("0.00").up().ele("vFCP").txt("0.00").up()
+       .ele("vBCST").txt("0.00").up().ele("vST").txt("0.00").up().ele("vFCPST").txt("0.00").up().ele("vFCPSTRet").txt("0.00").up()
+       .ele("vProd").txt(vTotal).up().ele("vFrete").txt("0.00").up().ele("vSeg").txt("0.00").up().ele("vDesc").txt("0.00").up()
+       .ele("vII").txt("0.00").up().ele("vIPI").txt("0.00").up().ele("vIPIDevol").txt("0.00").up().ele("vPIS").txt("0.00").up()
+       .ele("vCOFINS").txt("0.00").up().ele("vOutro").txt("0.00").up().ele("vNF").txt(vTotal).up().ele("vTotTrib").txt("0.00");
 
-    // Grupo TRANSP e PAG
     infNFe.ele("transp").ele("modFrete").txt("9");
-    const pag = infNFe.ele("pag");
-    const detPag = pag.ele("detPag");
-    detPag.ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0"));
-    detPag.ele("vPag").txt(vTotal);
+    infNFe.ele("pag").ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
 
-    // --- O PULO DO GATO: GERAR QR CODE AQUI ANTES DA ASSINATURA ---
+    // 4. INJEÇÃO DO QR CODE
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
     const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
@@ -175,15 +125,12 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const urlC = tpAmb === 1 ? SEFAZ_GO.qrProd : SEFAZ_GO.qrHomolog;
     const qrCode = `${urlC}?p=${chave}|2|${tpAmb}|${cscId}|${hash}`;
 
-    // Adiciona o suplemento diretamente no root ANTES da assinatura
     const supl = root.ele("infNFeSupl");
-    supl.ele("qrCode").dat(qrCode);
-    supl.ele("urlChave").txt(urlC);
+    supl.ele("qrCode").dat(qrCode).up().ele("urlChave").txt(urlC);
 
-    // Converte tudo para string
     const xmlRaw = root.end({ headless: true });
 
-    // 4. Assinatura - Ela vai automaticamente para o FINAL do XML, depois do Suplemento
+    // 5. ASSINATURA DIGITAL ISOLADA (Isso mata o Erro 225 de ordem!)
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.publicCert = certPem;
@@ -191,31 +138,25 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
-      transforms: [
-        "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
-        "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
-      ],
+      transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
       digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256"
     });
 
-    // O comando 'append' garante que a tag Signature vá para o lugar certo
-    sig.computeSignature(xmlRaw, {
-      location: { reference: "//*[local-name(.)='NFe']", action: "append" }
-    });
+    sig.computeSignature(xmlRaw);
+    const signatureOnly = sig.getSignatureXml(); 
     
-    const xmlFinal = sig.getSignedXml();
+    // Cola a assinatura no final, garantindo a ordem: infNFe -> infNFeSupl -> Signature
+    const xmlFinal = xmlRaw.replace("</NFe>", `${signatureOnly}</NFe>`);
 
-    // 5. Envelope SOAP e Envio
-    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal.replace(/<\?xml[^>]*\?>/i, "")}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+    // 6. ENVIO SEFAZ
+    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
-    console.log("ENVIANDO PARA SEFAZ...");
     const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
       httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
       headers: { "Content-Type": "application/soap+xml; charset=utf-8" },
       validateStatus: () => true
     });
 
-    // 6. Resposta
     const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
     const ret = result["soap:Envelope"]?.["soap:Body"]?.nfeResultMsg?.retEnviNFe || result["env:Envelope"]?.["env:Body"]?.nfeResultMsg?.retEnviNFe;
     const cStat = String(ret?.protNFe?.infProt?.cStat || ret?.cStat || "0");
@@ -229,4 +170,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Fiscal Luziânia Ativo"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo"));
