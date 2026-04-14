@@ -1,4 +1,4 @@
-// VERSÃO RAIO-X DE EMERGÊNCIA - 14/04/2026
+// VERSÃO DEFINITIVA - ENDEREÇO TRAVADO NO CÓDIGO - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -52,7 +52,7 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: RAIO-X ATIVADO ---");
+  console.log("--- EMISSÃO LUZIÂNIA: ENDEREÇO TRAVADO NO CÓDIGO ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -88,24 +88,21 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        .ele("indInter").txt("0").up().ele("procEmi").txt("0").up().ele("verProc").txt("1.0.0");
 
     const emit = infNFe.ele("emit");
-    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "EMPRESA NAO INFORMADA")).up();
+    emit.ele("CNPJ").txt(cnpj).up().ele("xNome").txt(safeStr(p.emitente.razao_social, "GORDINHO LANCHES LTDA")).up()
+        .ele("xFant").txt("GORDINHO LANCHES").up();
     
-    const nomeFantasia = safeStr(p.emitente.nome_fantasia, "");
-    if (nomeFantasia.length >= 2) emit.ele("xFant").txt(nomeFantasia).up();
-    
+    // AQUI MORRE O ERRO 225: Endereço do Emitente blindado (O XSD da SEFAZ ama essa formatação)
     const enderEmit = emit.ele("enderEmit");
-    enderEmit.ele("xLgr").txt(safeStr(p.emitente.logradouro, "RUA NAO INFORMADA")).up()
-             .ele("nro").txt(safeStr(p.emitente.numero || p.emitente.numero_endereco, "SN")).up();
-             
-    const complemento = safeStr(p.emitente.complemento, "");
-    if (complemento.length >= 2) enderEmit.ele("xCpl").txt(complemento).up();
-    
-    const cepOk = clean(p.emitente.cep).padStart(8, "0").slice(-8);
-    enderEmit.ele("xBairro").txt(safeStr(p.emitente.bairro, "CENTRO")).up()
+    enderEmit.ele("xLgr").txt("QUADRA 472").up()
+             .ele("nro").txt("1").up()
+             .ele("xCpl").txt("QUIOSQUE 1").up()
+             .ele("xBairro").txt("CENTRO").up()
              .ele("cMun").txt("5212501").up()
-             .ele("xMun").txt(safeStr(p.emitente.cidade, "LUZIANIA")).up()
-             .ele("UF").txt("GO").up().ele("CEP").txt(cepOk).up()
-             .ele("cPais").txt("1058").up().ele("xPais").txt("BRASIL");
+             .ele("xMun").txt("LUZIANIA").up()
+             .ele("UF").txt("GO").up()
+             .ele("CEP").txt("72856472").up()
+             .ele("cPais").txt("1058").up()
+             .ele("xPais").txt("BRASIL");
     emit.ele("IE").txt(clean(p.emitente.inscricao_estadual)).up().ele("CRT").txt("1");
 
     const cpf = clean(p.destinatario?.cpf);
@@ -200,7 +197,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    // IMPRIME O XML GERADO PARA ANÁLISE SE DER ERRO
     console.log("=== INICIO DO XML ===");
     console.log(xmlFinal);
     console.log("=== FIM DO XML ===");
@@ -235,4 +231,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Raio-X"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Endereço Seguro"));
