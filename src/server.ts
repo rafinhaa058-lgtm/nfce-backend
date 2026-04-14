@@ -1,4 +1,4 @@
-// VERSÃO DO MILAGRE - FIX KEYINFO (CERTIFICADO NA ASSINATURA) - 14/04/2026
+// VERSÃO SALVA-VIDAS - FIX KEYINFO E SHA1 - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,19 +22,6 @@ const SEFAZ_GO = {
   qrHomolog: "https://homolog.sefaz.go.gov.br/nfeweb/sites/nfce/danfeNFCe",
 };
 
-// 🚨 A CORREÇÃO DO ERRO 225 ESTÁ AQUI: O wrapper <KeyInfo> que a SEFAZ exige!
-class SefazKeyInfo {
-  cert: string;
-  constructor(certPem: string) {
-    this.cert = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/[\r\n]/g, "");
-  }
-  // Agora o xml-crypto vai obrigatoriamente colar isso dentro da <Signature>
-  getKeyInfo(key?: any, prefix?: string) {
-    return `<KeyInfo><X509Data><X509Certificate>${this.cert}</X509Certificate></X509Data></KeyInfo>`;
-  }
-  getKey() { return null; }
-}
-
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
@@ -54,7 +41,7 @@ const safeStr = (v: any, fallback: string, max: number = 60) => {
 
 app.post("/nfce/emitir/:orderId", async (req, res) => {
   console.log("\n========================================================");
-  console.log("--- EMISSÃO LUZIÂNIA: O MILAGRE DAS 23:59 ---");
+  console.log("--- EMISSÃO LUZIÂNIA: INJEÇÃO DO CERTIFICADO ATIVADA ---");
   try {
     const p = req.body;
     const tpAmb = Number(p.ambiente || 2);
@@ -168,16 +155,25 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     const xmlRaw = root.end({ headless: true, prettyPrint: false });
 
+    // A MÁGICA: Injetor Puro (Objeto literal) para a biblioteca não ter como ignorar
     const sig = new SignedXml();
     sig.privateKey = keyPem;
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
-    sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
-    (sig as any).keyInfoProvider = new SefazKeyInfo(certPem);
+    sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1"; // SEFAZ exige SHA-1
+
+    const cleanCert = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/[\r\n]/g, "");
+    
+    (sig as any).keyInfoProvider = {
+      getKeyInfo: function (key: any, prefix: string) {
+        return `<X509Data><X509Certificate>${cleanCert}</X509Certificate></X509Data>`;
+      },
+      getKey: function () { return null; }
+    };
 
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
       transforms: ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-      digestAlgorithm: "http://www.w3.org/2001/04/xmlenc#sha256",
+      digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1", // SEFAZ exige SHA-1
       uri: `#NFe${chave}`
     });
 
@@ -203,9 +199,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
        xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
     }
 
-    console.log("=== INICIO DO XML ===");
+    console.log("=== XML COMPLETO PARA A SEFAZ ===");
     console.log(xmlFinal);
-    console.log("=== FIM DO XML ===");
 
     const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
 
@@ -237,4 +232,4 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
   }
 });
 
-app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Milagre"));
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Vingança!"));
