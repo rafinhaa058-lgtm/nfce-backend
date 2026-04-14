@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - A BALA DE PRATA (FIX KEYINFO) - 14/04/2026
+// VERSÃO DEFINITIVA - A BALA DE PRATA (FIX TYPESCRIPT) - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -26,11 +26,9 @@ const SEFAZ_GO = {
 class SefazKeyInfo {
   cert: string;
   constructor(certPem: string) {
-    // Remove cabeçalhos e quebras de linha do certificado para ficar 100% limpo
     this.cert = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/[\r\n]/g, "");
   }
   getKeyInfo() {
-    // Retorna APENAS a tag X509Data. Se enviar KeyValue junto, a SEFAZ dá Erro 225!
     return `<X509Data><X509Certificate>${this.cert}</X509Certificate></X509Data>`;
   }
   getKey() { return null; }
@@ -55,7 +53,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const certPem = forge.pki.certificateToPem(certBag.cert!);
     const keyPem = forge.pki.privateKeyToPem(keyBag.key!);
 
-    // 2. CHAVE DE ACESSO (Sem zeros na tag nNF)
+    // 2. CHAVE DE ACESSO
     const cnpj = clean(p.emitente.cnpj).padStart(14, "0").slice(-14);
     const dh = new Date(new Date().getTime() - (3 * 60 * 60 * 1000)).toISOString().replace(/\.\d+Z$/, "-03:00");
     const cNF = String(Math.floor(Math.random() * 99999999)).padStart(8, "0");
@@ -136,7 +134,7 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     const pag = infNFe.ele("pag");
     pag.ele("detPag").ele("tPag").txt(String(p.pagamento?.forma_codigo || "01").padStart(2, "0")).up().ele("vPag").txt(vTotal);
 
-    // 4. QR CODE (Com CDATA Exato)
+    // 4. QR CODE
     const csc = String(p.certificado.csc || p.certificado.csc_token).trim();
     const cscId = String(p.certificado.csc_id).padStart(6, "0");
     const qrConcat = `${chave}|2|${tpAmb}|${cscId}${csc}`;
@@ -155,8 +153,8 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
     
-    // A mágica acontece aqui: Ativamos o Provedor exclusivo da SEFAZ
-    sig.keyInfoProvider = new SefazKeyInfo(certPem);
+    // BURLANDO O TYPESCRIPT AQUI:
+    (sig as any).keyInfoProvider = new SefazKeyInfo(certPem);
 
     sig.addReference({
       xpath: "//*[local-name(.)='infNFe']",
@@ -167,7 +165,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     sig.computeSignature(xmlRaw);
     
-    // Injeção manual cirúrgica para garantir namespaces intactos
     const signatureXml = sig.getSignatureXml();
     const xmlFinal = xmlRaw.replace("</NFe>", `${signatureXml}</NFe>`);
 
