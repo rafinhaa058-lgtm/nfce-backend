@@ -1,4 +1,4 @@
-// VERSÃO DEFINITIVA - EXTERMINADOR DE CARACTERES INVISÍVEIS - 14/04/2026
+// VERSÃO DEFINITIVA - EXTERMINADOR DE CARACTERES (COMPLETA) - 14/04/2026
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -36,7 +36,6 @@ class SefazKeyInfo {
 const clean = (v: any) => String(v ?? "").replace(/\D/g, "");
 const safeNo = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
-// A MÁGICA ESTÁ AQUI: Remove "Enters", "Tabs" e espaços duplos que quebram o Schema 225
 const norm = (v: any, max: number = 60) => String(v ?? "")
   .replace(/[\r\n\t]+/g, " ") 
   .replace(/\s{2,}/g, " ")
@@ -120,10 +119,10 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
           .ele("xProd").txt(norm(it.descricao || "PRODUTO", 120)).up()
           .ele("NCM").txt(clean(it.ncm) || "21069090").up().ele("CFOP").txt(clean(it.cfop) || "5102").up()
           .ele("uCom").txt("UN").up().ele("qCom").txt(q.toFixed(4)).up()
-          .ele("vUnCom").txt(v.toFixed(4)).up() // 4 CASAS DECIMAIS EXIGIDAS
+          .ele("vUnCom").txt(v.toFixed(4)).up()
           .ele("vProd").txt(totalItem.toFixed(2)).up().ele("cEANTrib").txt("SEM GTIN").up()
           .ele("uTrib").txt("UN").up().ele("qTrib").txt(q.toFixed(4)).up()
-          .ele("vUnTrib").txt(v.toFixed(4)).up() // 4 CASAS DECIMAIS EXIGIDAS
+          .ele("vUnTrib").txt(v.toFixed(4)).up()
           .ele("indTot").txt("1");
 
       const imp = det.ele("imposto");
@@ -146,7 +145,6 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
 
     infNFe.ele("transp").ele("modFrete").txt("9");
     const pag = infNFe.ele("pag");
-    // TRAVADO NO DINHEIRO (01) PARA EVITAR FALHA DE SCHEMA DE CARTÃO
     pag.ele("detPag").ele("tPag").txt("01").up().ele("vPag").txt(vTotalNota);
     pag.ele("vTroco").txt("0.00");
 
@@ -180,5 +178,41 @@ app.post("/nfce/emitir/:orderId", async (req, res) => {
     
     let xmlFinal = signedXml.replace('<Signature', `${suplXml}<Signature`);
     
-    // LIMPEZA FINAL ABSOLUTA DE NAMESPACES
-    xmlFinal = xml
+    xmlFinal = xmlFinal.replace(/xmlns:ns\d="[^"]*"/g, "");
+    xmlFinal = xmlFinal.replace(/xmlns=""/g, "");
+    xmlFinal = xmlFinal.replace(/\s{2,}/g, " "); 
+    if (!xmlFinal.includes('xmlns="http://www.portalfiscal.inf.br/nfe"')) {
+       xmlFinal = xmlFinal.replace('<NFe>', '<NFe xmlns="http://www.portalfiscal.inf.br/nfe">');
+    }
+
+    const soap = `<?xml version="1.0" encoding="utf-8"?><soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body><nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4"><enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>1</idLote><indSinc>1</indSinc>${xmlFinal}</enviNFe></nfeDadosMsg></soap12:Body></soap12:Envelope>`;
+
+    const resSefaz = await axios.post(tpAmb === 1 ? SEFAZ_GO.prod : SEFAZ_GO.homolog, soap, {
+      httpsAgent: new https.Agent({ pfx: certBuffer, passphrase: String(p.certificado.senha), rejectUnauthorized: false }),
+      headers: { "Content-Type": "application/soap+xml; charset=utf-8" },
+      validateStatus: () => true
+    });
+
+    const result = new XMLParser({ ignoreAttributes: false }).parse(resSefaz.data);
+    const ret = result["soap:Envelope"]?.["soap:Body"]?.nfeResultMsg?.retEnviNFe || result["env:Envelope"]?.["env:Body"]?.nfeResultMsg?.retEnviNFe;
+    const cStat = String(ret?.protNFe?.infProt?.cStat || ret?.cStat || "0");
+    
+    console.log("CSTAT FINAL SEFAZ-GO:", cStat);
+    if (cStat !== "100") console.log("MOTIVO:", ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo);
+
+    res.json({ 
+      autorizado: cStat === "100", 
+      status: cStat === "100" ? "AUTHORIZED" : "REJECTED", 
+      motivo: ret?.xMotivo || ret?.protNFe?.infProt?.xMotivo || "Erro desconhecido", 
+      chave_acesso: chave,
+      protocolo: ret?.protNFe?.infProt?.nProt || "",
+      cStat: cStat
+    });
+
+  } catch (err: any) {
+    console.error("ERRO NO SERVIDOR:", err.message);
+    res.status(500).json({ autorizado: false, status: "ERROR", motivo: err.message });
+  }
+});
+
+app.listen(Number(process.env.PORT || 3000), () => console.log("🚀 Servidor Luziânia Ativo - Modo Exterminador"));
